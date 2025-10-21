@@ -1,0 +1,352 @@
+const express = require('express');
+const bcrypt = require('bcryptjs');
+const { body, validationResult } = require('express-validator');
+const { query } = require('../database/connection');
+const { authenticateToken, requireVerified } = require('../middleware/auth');
+const { sanitizeString, formatDate } = require('../utils/helpers');
+
+const router = express.Router();
+
+// Get user profile
+router.get('/profile', authenticateToken, async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, full_name, email, phone, membership_type, membership_points, 
+              email_verified, phone_verified, created_at, updated_at
+       FROM users WHERE id = ?`,
+      [req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = result.rows[0];
+    res.json({
+      user: {
+        id: user.id,
+        full_name: user.full_name,
+        email: user.email,
+        phone: user.phone,
+        membership_type: user.membership_type,
+        membership_points: user.membership_points,
+        email_verified: user.email_verified,
+        phone_verified: user.phone_verified,
+        created_at: user.created_at,
+        updated_at: user.updated_at
+      }
+    });
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update user profile
+router.put('/profile', authenticateToken, [
+  body('full_name').optional().trim().isLength({ min: 2, max: 255 }).withMessage('Full name must be between 2 and 255 characters'),
+  body('phone').optional().isMobilePhone().withMessage('Valid phone number is required')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { full_name, phone } = req.body;
+    const updates = [];
+    const values = [];
+    let paramCount = 1;
+
+    if (full_name) {
+      updates.push(`full_name = $${paramCount}`);
+      values.push(sanitizeString(full_name));
+      paramCount++;
+    }
+
+    if (phone) {
+      updates.push(`phone = $${paramCount}`);
+      values.push(phone);
+      paramCount++;
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    values.push(req.user.id);
+    const queryText = `UPDATE users SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = $${paramCount} RETURNING *`;
+
+    const result = await query(queryText, values);
+    const user = result.rows[0];
+
+    res.json({
+      message: 'Profile updated successfully',
+      user: {
+        id: user.id,
+        full_name: user.full_name,
+        email: user.email,
+        phone: user.phone,
+        membership_type: user.membership_type,
+        membership_points: user.membership_points,
+        updated_at: user.updated_at
+      }
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Change password
+router.put('/change-password', authenticateToken, [
+  body('current_password').notEmpty().withMessage('Current password is required'),
+  body('new_password').isLength({ min: 8 }).withMessage('New password must be at least 8 characters long')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { current_password, new_password } = req.body;
+
+    // Get current password hash
+    const result = await query(
+      'SELECT password_hash FROM users WHERE id = ?',
+      [req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Verify current password
+    const isValidPassword = await bcrypt.compare(current_password, result.rows[0].password_hash);
+    if (!isValidPassword) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+
+    // Hash new password
+    const saltRounds = 12;
+    const password_hash = await bcrypt.hash(new_password, saltRounds);
+
+    // Update password
+    await query(
+      'UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [password_hash, req.user.id]
+    );
+
+    res.json({ message: 'Password changed successfully' });
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get user addresses
+router.get('/addresses', authenticateToken, async (req, res) => {
+  try {
+    const result = await query(
+      'SELECT * FROM addresses WHERE user_id = ? ORDER BY is_default DESC, created_at DESC',
+      [req.user.id]
+    );
+
+    res.json({ addresses: result.rows });
+  } catch (error) {
+    console.error('Get addresses error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Add new address
+router.post('/addresses', authenticateToken, [
+  body('label').trim().notEmpty().withMessage('Address label is required'),
+  body('country').trim().notEmpty().withMessage('Country is required'),
+  body('city').trim().notEmpty().withMessage('City is required'),
+  body('street').trim().notEmpty().withMessage('Street is required'),
+  body('postal_code').optional().trim(),
+  body('is_default').optional().isBoolean()
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { label, country, city, street, postal_code, is_default } = req.body;
+
+    // If this is set as default, unset other defaults
+    if (is_default) {
+      await query(
+        'UPDATE addresses SET is_default = false WHERE user_id = ?',
+        [req.user.id]
+      );
+    }
+
+    const result = await query(
+      `INSERT INTO addresses (user_id, label, country, city, street, postal_code, is_default)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       RETURNING *`,
+      [req.user.id, sanitizeString(label), sanitizeString(country), sanitizeString(city), sanitizeString(street), postal_code, is_default || false]
+    );
+
+    res.status(201).json({
+      message: 'Address added successfully',
+      address: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Add address error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update address
+router.put('/addresses/:id', authenticateToken, [
+  body('label').optional().trim().notEmpty().withMessage('Address label cannot be empty'),
+  body('country').optional().trim().notEmpty().withMessage('Country cannot be empty'),
+  body('city').optional().trim().notEmpty().withMessage('City cannot be empty'),
+  body('street').optional().trim().notEmpty().withMessage('Street cannot be empty'),
+  body('postal_code').optional().trim(),
+  body('is_default').optional().isBoolean()
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { id } = req.params;
+    const { label, country, city, street, postal_code, is_default } = req.body;
+
+    // Check if address belongs to user
+    const addressCheck = await query(
+      'SELECT id FROM addresses WHERE id = ? AND user_id = ?',
+      [id, req.user.id]
+    );
+
+    if (addressCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Address not found' });
+    }
+
+    // If this is set as default, unset other defaults
+    if (is_default) {
+      await query(
+        'UPDATE addresses SET is_default = false WHERE user_id = ? AND id != ?',
+        [req.user.id, id]
+      );
+    }
+
+    const updates = [];
+    const values = [];
+    let paramCount = 1;
+
+    if (label !== undefined) {
+      updates.push(`label = $${paramCount}`);
+      values.push(sanitizeString(label));
+      paramCount++;
+    }
+    if (country !== undefined) {
+      updates.push(`country = $${paramCount}`);
+      values.push(sanitizeString(country));
+      paramCount++;
+    }
+    if (city !== undefined) {
+      updates.push(`city = $${paramCount}`);
+      values.push(sanitizeString(city));
+      paramCount++;
+    }
+    if (street !== undefined) {
+      updates.push(`street = $${paramCount}`);
+      values.push(sanitizeString(street));
+      paramCount++;
+    }
+    if (postal_code !== undefined) {
+      updates.push(`postal_code = $${paramCount}`);
+      values.push(postal_code);
+      paramCount++;
+    }
+    if (is_default !== undefined) {
+      updates.push(`is_default = $${paramCount}`);
+      values.push(is_default);
+      paramCount++;
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    values.push(id, req.user.id);
+    const queryText = `UPDATE addresses SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = $${paramCount} AND user_id = $${paramCount + 1} RETURNING *`;
+
+    const result = await query(queryText, values);
+
+    res.json({
+      message: 'Address updated successfully',
+      address: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Update address error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete address
+router.delete('/addresses/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await query(
+      'DELETE FROM addresses WHERE id = ? AND user_id = ? RETURNING id',
+      [id, req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Address not found' });
+    }
+
+    res.json({ message: 'Address deleted successfully' });
+  } catch (error) {
+    console.error('Delete address error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get user orders
+router.get('/orders', authenticateToken, async (req, res) => {
+  try {
+    const { page = 1, limit = 10 } = req.query;
+    const offset = (page - 1) * limit;
+
+    const result = await query(
+      `SELECT o.*, a.label as shipping_address_label, a.city, a.country
+       FROM orders o
+       JOIN addresses a ON o.shipping_address_id = a.id
+       WHERE o.user_id = ?
+       ORDER BY o.created_at DESC
+       LIMIT ? OFFSET ?`,
+      [req.user.id, limit, offset]
+    );
+
+    // Get total count
+    const countResult = await query(
+      'SELECT COUNT(*) FROM orders WHERE user_id = ?',
+      [req.user.id]
+    );
+
+    res.json({
+      orders: result.rows,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: parseInt(countResult.rows[0].count),
+        pages: Math.ceil(countResult.rows[0].count / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Get orders error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+module.exports = router;
