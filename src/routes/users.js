@@ -161,7 +161,7 @@ router.get('/addresses', authenticateToken, async (req, res) => {
 });
 
 // Add new address
-router.post('/addresses', authenticateToken, [
+router.post('/addresses', authenticateToken, requireVerified, [
   body('label').trim().notEmpty().withMessage('Address label is required'),
   body('country').trim().notEmpty().withMessage('Country is required'),
   body('city').trim().notEmpty().withMessage('City is required'),
@@ -176,7 +176,9 @@ router.post('/addresses', authenticateToken, [
     }
 
     const { label, country, city, street, postal_code, is_default } = req.body;
-
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
     // If this is set as default, unset other defaults
     if (is_default) {
       await query(
@@ -185,16 +187,25 @@ router.post('/addresses', authenticateToken, [
       );
     }
 
-    const result = await query(
+    await query(
       `INSERT INTO addresses (user_id, label, country, city, street, postal_code, is_default)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       RETURNING *`,
-      [req.user.id, sanitizeString(label), sanitizeString(country), sanitizeString(city), sanitizeString(street), postal_code, is_default || false]
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [req.user.id, label, country, city, street, postal_code ?? null, is_default || false]
     );
+    
+    const selectResult = await query(
+      'SELECT id, label, country, city, street, postal_code, is_default, created_at, updated_at FROM addresses WHERE user_id = ? ORDER BY created_at DESC LIMIT 1',
+      [req.user.id]
+    );
+
+    if (selectResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Address not found' });
+    }
+
 
     res.status(201).json({
       message: 'Address added successfully',
-      address: result.rows[0]
+      address: selectResult.rows[0]
     });
   } catch (error) {
     console.error('Add address error:', error);
@@ -298,11 +309,11 @@ router.delete('/addresses/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
 
     const result = await query(
-      'DELETE FROM addresses WHERE id = ? AND user_id = ? RETURNING id',
+      'DELETE FROM addresses WHERE id = ? AND user_id = ?',
       [id, req.user.id]
     );
 
-    if (result.rows.length === 0) {
+    if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Address not found' });
     }
 

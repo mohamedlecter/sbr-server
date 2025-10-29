@@ -1,3 +1,4 @@
+const { v4: uuidv4 } = require('uuid');
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const { query, transaction } = require('../database/connection');
@@ -94,68 +95,56 @@ router.post('/create', authenticateToken, requireVerified, [
     // Create order in transaction
     const orderResult = await transaction(async (client) => {
       // Create order
+      const orderId = uuidv4(); // Generate UUID for order
       const orderNumber = generateOrderNumber();
-      const orderQuery = `
-        INSERT INTO orders (user_id, status, total_amount, shipping_address_id, payment_status, notes)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `;
-      const orderResult = await client.query(orderQuery, [
-        req.user.id,
-        'pending',
-        totalAmount,
-        shipping_address_id,
-        'unpaid',
-        notes
-      ]);
 
-      const order = orderResult.rows[0];
-
-      // Create order items
+      // Insert order
+      await client.query(
+        `INSERT INTO orders (id, user_id, order_number, status, total_amount, shipping_address_id, payment_status, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [orderId, req.user.id, orderNumber, 'pending', totalAmount, shipping_address_id, 'unpaid', notes || null]
+      );
+     // Insert order items
       for (const item of orderItems) {
         await client.query(
-          'INSERT INTO order_items (order_id, product_type, product_id, quantity, price) VALUES (?, ?, ?, ?, ?)',
-          [order.id, item.product_type, item.product_id, item.quantity, item.price]
+          `INSERT INTO order_items (order_id, product_type, product_id, quantity, price)
+           VALUES (?, ?, ?, ?, ?)`,
+          [orderId, item.product_type, item.product_id, item.quantity, item.price]
         );
       }
 
-      // Create payment record
-      const paymentQuery = `
-        INSERT INTO payments (order_id, method, amount, status)
-        VALUES (?, ?, ?, ?)
-      `;
-      const paymentResult = await client.query(paymentQuery, [
-        order.id,
-        payment_method,
-        totalAmount,
-        'pending'
-      ]);
+      // Insert payment record
+      const paymentId = uuidv4();
+      await client.query(
+        `INSERT INTO payments (id, order_id, method, amount, status)
+         VALUES (?, ?, ?, ?, ?)`,
+        [paymentId, orderId, payment_method, totalAmount, 'pending']
+      );
 
-      // Update product quantities
+      // Update stock
       for (const item of orderItems) {
-        if (item.product_type === 'part') {
-          await client.query(
-            'UPDATE parts SET quantity = quantity - ? WHERE id = ?',
-            [item.quantity, item.product_id]
-          );
-        } else {
-          await client.query(
-            'UPDATE merchandise SET quantity = quantity - ? WHERE id = ?',
-            [item.quantity, item.product_id]
-          );
-        }
+        const table = item.product_type === 'part' ? 'parts' : 'merchandise';
+        await client.query(`UPDATE ${table} SET quantity = quantity - ? WHERE id = ?`, [
+          item.quantity,
+          item.product_id
+        ]);
       }
 
       // Clear cart
       await client.query('DELETE FROM cart_items WHERE user_id = ?', [req.user.id]);
 
-      return { order: orderResult.rows[0], payment: paymentResult.rows[0] };
+      // Fetch order and payment for response
+      const [orderRows] = await client.query('SELECT * FROM orders WHERE id = ?', [orderId]);
+      const [paymentRows] = await client.query('SELECT * FROM payments WHERE id = ?', [paymentId]);
+
+      return { order: orderRows[0], payment: paymentRows[0], orderNumber };
     });
 
     res.status(201).json({
       message: 'Order created successfully',
       order: {
         id: orderResult.order.id,
-        order_number: generateOrderNumber(),
+        order_number: orderResult.orderNumber,
         status: orderResult.order.status,
         total_amount: orderResult.order.total_amount,
         shipping_cost: shippingCost,
@@ -183,15 +172,14 @@ router.get('/', authenticateToken, async (req, res) => {
     const { offset, limit: queryLimit } = paginate(page, limit);
 
     let whereClause = 'WHERE o.user_id = ?';
-    let queryParams = [req.user.id];
-    let paramCount = 2;
+    const queryParams = [req.user.id];
 
     if (status) {
-      whereClause += ` AND o.status = $${paramCount}`;
+      whereClause += ' AND o.status = ?';
       queryParams.push(status);
-      paramCount++;
     }
 
+    // Main query
     const result = await query(
       `SELECT o.*, a.label as shipping_address_label, a.city, a.country,
               COUNT(oi.id) as item_count
@@ -201,13 +189,13 @@ router.get('/', authenticateToken, async (req, res) => {
        ${whereClause}
        GROUP BY o.id, a.label, a.city, a.country
        ORDER BY o.created_at DESC
-       LIMIT $${paramCount} OFFSET $${paramCount + 1}`,
-      [...queryParams, queryLimit, offset]
+       LIMIT ${queryLimit} OFFSET ${offset}`,
+      queryParams
     );
 
-    // Get total count
+    // Total count
     const countResult = await query(
-      `SELECT COUNT(*) FROM orders o ${whereClause}`,
+      `SELECT COUNT(*) as total FROM orders o ${whereClause}`,
       queryParams
     );
 
@@ -216,8 +204,8 @@ router.get('/', authenticateToken, async (req, res) => {
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total: parseInt(countResult.rows[0].count),
-        pages: Math.ceil(countResult.rows[0].count / limit)
+        total: parseInt(countResult.rows[0].total),
+        pages: Math.ceil(countResult.rows[0].total / limit)
       }
     });
   } catch (error) {
@@ -341,9 +329,10 @@ router.put('/:id/cancel', authenticateToken, async (req, res) => {
         'SELECT product_type, product_id, quantity FROM order_items WHERE order_id = ?',
         [id]
       );
+      console.log("itemsResult", itemsResult);
 
       // Restore stock
-      for (const item of itemsResult.rows) {
+      for (const item of itemsResult[0]) {
         if (item.product_type === 'part') {
           await client.query(
             'UPDATE parts SET quantity = quantity + ? WHERE id = ?',
