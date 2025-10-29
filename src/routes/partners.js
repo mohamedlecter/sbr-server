@@ -9,16 +9,15 @@ const router = express.Router();
 router.get('/', optionalAuth, async (req, res) => {
   try {
     const { page = 1, limit = 20, search } = req.query;
-    const { offset, queryLimit } = paginate(page, limit);
+    const { offset, limit: queryLimit } = paginate(page, limit);
 
     let whereClause = 'WHERE p.is_active = true';
     let queryParams = [];
-    let paramCount = 1;
 
     if (search) {
-      whereClause += ` AND (p.name ILIKE $${paramCount} OR p.description ILIKE $${paramCount})`;
-      queryParams.push(`%${search}%`);
-      paramCount++;
+      whereClause += ` AND (LOWER(p.name) LIKE ? OR LOWER(p.description) LIKE ?)`;
+      queryParams.push(`%${search.toLowerCase()}%`);
+      queryParams.push(`%${search.toLowerCase()}%`);
     }
 
     const result = await query(
@@ -26,7 +25,7 @@ router.get('/', optionalAuth, async (req, res) => {
        FROM partners p
        ${whereClause}
        ORDER BY p.name
-       LIMIT $${paramCount} OFFSET $${paramCount + 1}`,
+       LIMIT ? OFFSET ?`,
       [...queryParams, queryLimit, offset]
     );
 
@@ -54,11 +53,11 @@ router.get('/', optionalAuth, async (req, res) => {
 // Get single partner details
 router.get('/:id', optionalAuth, async (req, res) => {
   try {
-    const { id } = req.params;
+    const partnerId = parseInt(req.params.id, 10);
 
     const result = await query(
       'SELECT * FROM partners WHERE id = ? AND is_active = true',
-      [id]
+      [partnerId]
     );
 
     if (result.rows.length === 0) {

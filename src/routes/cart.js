@@ -1,7 +1,7 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const { query } = require('../database/connection');
-const { authenticateToken, requireVerified } = require('../middleware/auth');
+const { authenticateToken, requireVerified, optionalAuth } = require('../middleware/auth');
 const { getMembershipDiscount, calculatePointsEarned } = require('../utils/helpers');
 
 const router = express.Router();
@@ -74,7 +74,7 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 // Add item to cart
-router.post('/add', authenticateToken, requireVerified, [
+router.post('/add',authenticateToken, requireVerified, [
   body('product_type').isIn(['part', 'merch']).withMessage('Product type must be either "part" or "merch"'),
   body('product_id').isUUID().withMessage('Valid product ID is required'),
   body('quantity').isInt({ min: 1 }).withMessage('Quantity must be at least 1')

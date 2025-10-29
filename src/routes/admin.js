@@ -68,28 +68,25 @@ router.get('/dashboard', authenticateToken, requireAdmin, async (req, res) => {
 router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { page = 1, limit = 20, search, membership_type, email_verified } = req.query;
-    const { offset, queryLimit } = paginate(page, limit);
+    const { offset, limit: queryLimit } = paginate(page, limit);
 
     let whereConditions = [];
     let queryParams = [];
-    let paramCount = 1;
 
     if (search) {
-      whereConditions.push(`(u.full_name ILIKE $${paramCount} OR u.email ILIKE $${paramCount})`);
-      queryParams.push(`%${sanitizeString(search)}%`);
-      paramCount++;
+      whereConditions.push(`(LOWER(u.full_name) LIKE ? OR LOWER(u.email) LIKE ?)`);
+      queryParams.push(`%${sanitizeString(search).toLowerCase()}%`);
+      queryParams.push(`%${sanitizeString(search).toLowerCase()}%`);
     }
 
     if (membership_type) {
-      whereConditions.push(`u.membership_type = $${paramCount}`);
+      whereConditions.push(`u.membership_type = ?`);
       queryParams.push(membership_type);
-      paramCount++;
     }
 
     if (email_verified !== undefined) {
-      whereConditions.push(`u.email_verified = $${paramCount}`);
+      whereConditions.push(`u.email_verified = ?`);
       queryParams.push(email_verified === 'true');
-      paramCount++;
     }
 
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
@@ -101,7 +98,7 @@ router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
        ${whereClause}
        GROUP BY u.id
        ORDER BY u.created_at DESC
-       LIMIT $${paramCount} OFFSET $${paramCount + 1}`,
+       LIMIT ? OFFSET ?`,
       [...queryParams, queryLimit, offset]
     );
 
@@ -177,7 +174,7 @@ router.put('/users/:id/membership', authenticateToken, requireAdmin, [
 router.get('/orders', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { page = 1, limit = 20, status, payment_status, user_id } = req.query;
-    const { offset, queryLimit } = paginate(page, limit);
+    const { offset, limit: queryLimit } = paginate(page, limit);
 
     let whereConditions = [];
     let queryParams = [];
@@ -282,69 +279,87 @@ router.put('/orders/:id/status', authenticateToken, requireAdmin, [
 router.get('/products', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { page = 1, limit = 20, type, search, brand_id, category_id } = req.query;
-    const { offset, queryLimit } = paginate(page, limit);
+    const { offset, limit: queryLimit } = paginate(page, limit);
 
-    let whereConditions = [];
-    let queryParams = [];
-    let paramCount = 1;
-
-    if (type === 'part') {
-      whereConditions.push('p.id IS NOT NULL');
-    } else if (type === 'merch') {
-      whereConditions.push('m.id IS NOT NULL');
+    // Build WHERE conditions for parts
+    let partsConditions = [];
+    let partsParams = [];
+    
+    if (!type || type === 'part') {
+      if (search) {
+        partsConditions.push('LOWER(p.name) LIKE ?');
+        partsParams.push(`%${sanitizeString(search).toLowerCase()}%`);
+      }
+      if (brand_id) {
+        partsConditions.push('p.brand_id = ?');
+        partsParams.push(parseInt(brand_id, 10));
+      }
+      if (category_id) {
+        partsConditions.push('p.category_id = ?');
+        partsParams.push(parseInt(category_id, 10));
+      }
+    }
+    
+    // Build WHERE conditions for merchandise
+    let merchConditions = [];
+    let merchParams = [];
+    
+    if (!type || type === 'merch') {
+      if (search) {
+        merchConditions.push('LOWER(m.name) LIKE ?');
+        merchParams.push(`%${sanitizeString(search).toLowerCase()}%`);
+      }
     }
 
-    if (search) {
-      whereConditions.push(`(COALESCE(p.name, m.name) ILIKE $${paramCount})`);
-      queryParams.push(`%${sanitizeString(search)}%`);
-      paramCount++;
-    }
-
-    if (brand_id && type === 'part') {
-      whereConditions.push(`p.brand_id = $${paramCount}`);
-      queryParams.push(brand_id);
-      paramCount++;
-    }
-
-    if (category_id && type === 'part') {
-      whereConditions.push(`p.category_id = $${paramCount}`);
-      queryParams.push(category_id);
-      paramCount++;
-    }
-
-    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+    const partsWhereClause = partsConditions.length > 0 ? `WHERE ${partsConditions.join(' AND ')}` : '';
+    const merchWhereClause = merchConditions.length > 0 ? `WHERE ${merchConditions.join(' AND ')}` : '';
 
     const result = await query(
-      `SELECT 
-        COALESCE(p.id, m.id) as id,
-        COALESCE(p.name, m.name) as name,
-        CASE WHEN p.id IS NOT NULL THEN 'part' ELSE 'merch' END as type,
-        p.selling_price as price,
-        m.price as merch_price,
-        COALESCE(p.quantity, m.quantity) as quantity,
-        COALESCE(p.is_active, m.is_active) as is_active,
-        COALESCE(p.created_at, m.created_at) as created_at,
-        b.name as brand_name,
-        c.name as category_name
-       FROM parts p
-       FULL OUTER JOIN merchandise m ON FALSE
-       LEFT JOIN brands b ON p.brand_id = b.id
-       LEFT JOIN categories c ON p.category_id = c.id
-       ${whereClause}
-       ORDER BY created_at DESC
-       LIMIT $${paramCount} OFFSET $${paramCount + 1}`,
-      [...queryParams, queryLimit, offset]
+      `SELECT * FROM (
+        SELECT 
+          p.id as id,
+          p.name as name,
+          'part' as type,
+          p.selling_price as price,
+          NULL as merch_price,
+          p.quantity as quantity,
+          p.is_active as is_active,
+          p.created_at as created_at,
+          b.name as brand_name,
+          c.name as category_name
+        FROM parts p
+        LEFT JOIN brands b ON p.brand_id = b.id
+        LEFT JOIN categories c ON p.category_id = c.id
+        ${partsWhereClause}
+        ${!type || type === 'merch' ? '' : 'UNION ALL'}
+        ${!type || type === 'merch' ? '' : `
+        SELECT 
+          m.id as id,
+          m.name as name,
+          'merch' as type,
+          NULL as price,
+          m.price as merch_price,
+          m.quantity as quantity,
+          m.is_active as is_active,
+          m.created_at as created_at,
+          NULL as brand_name,
+          NULL as category_name
+        FROM merchandise m
+        ${merchWhereClause}
+        `}
+      ) as combined
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?`,
+      [...partsParams, ...merchParams, queryLimit, offset]
     );
 
     // Get total count
-    const countResult = await query(
-      `SELECT COUNT(*) FROM (
-        SELECT p.id FROM parts p
-        UNION ALL
-        SELECT m.id FROM merchandise m
-      ) as products ${whereClause}`,
-      queryParams
-    );
+    const countQuery = type === 'merch' 
+      ? `SELECT COUNT(*) as count FROM merchandise m ${merchWhereClause}`
+      : type === 'part'
+      ? `SELECT COUNT(*) as count FROM parts p ${partsWhereClause}`
+      : `SELECT (SELECT COUNT(*) FROM parts p ${partsWhereClause}) + (SELECT COUNT(*) FROM merchandise m ${merchWhereClause}) as count`;
+    const countResult = await query(countQuery, type === 'merch' ? merchParams : type === 'part' ? partsParams : [...partsParams, ...merchParams]);
 
     res.json({
       products: result.rows,
@@ -767,7 +782,7 @@ router.delete('/categories/:id', authenticateToken, requireAdmin, async (req, re
 router.get('/feedback', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { page = 1, limit = 20, feedback_type } = req.query;
-    const { offset, queryLimit } = paginate(page, limit);
+    const { offset, limit: queryLimit } = paginate(page, limit);
 
     let whereClause = '';
     let queryParams = [];
@@ -814,7 +829,7 @@ router.get('/feedback', authenticateToken, requireAdmin, async (req, res) => {
 router.get('/ambassadors', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { page = 1, limit = 20, status } = req.query;
-    const { offset, queryLimit } = paginate(page, limit);
+    const { offset, limit: queryLimit } = paginate(page, limit);
 
     let whereClause = '';
     let queryParams = [];

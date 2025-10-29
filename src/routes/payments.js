@@ -296,7 +296,7 @@ router.get('/methods', (req, res) => {
 router.get('/history', authenticateToken, async (req, res) => {
   try {
     const { page = 1, limit = 10, status } = req.query;
-    const { offset, queryLimit } = paginate(page, limit);
+    const { offset, limit: queryLimit } = paginate(page, limit);
 
     let whereClause = 'WHERE p.order_id IN (SELECT id FROM orders WHERE user_id = ?)';
     let queryParams = [req.user.id];

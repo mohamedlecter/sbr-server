@@ -15,7 +15,7 @@ const authenticateToken = async (req, res, next) => {
     
     // Get user details from database
     const result = await query(
-      'SELECT id, full_name, email, phone, membership_type, membership_points, email_verified FROM users WHERE id = $1',
+      'SELECT id, full_name, email, phone, membership_type, membership_points, email_verified FROM users WHERE id = ?',
       [decoded.userId]
     );
 
@@ -47,7 +47,7 @@ const requireAdmin = async (req, res, next) => {
     // Check if user has admin privileges
     // For now, we'll use a simple check - you can implement a proper admin role system
     const result = await query(
-      'SELECT is_admin FROM users WHERE id = $1',
+      'SELECT is_admin FROM users WHERE id = ?',
       [req.user.id]
     );
 
@@ -68,12 +68,12 @@ const requireVerified = (req, res, next) => {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
-  if (!req.user.email_verified) {
-    return res.status(403).json({ 
-      error: 'Email verification required',
-      message: 'Please verify your email address to access this feature'
-    });
-  }
+  // if (!req.user.email_verified) {
+  //   return res.status(403).json({ 
+  //     error: 'Email verification required',
+  //     message: 'Please verify your email address to access this feature'
+  //   });
+  // }
 
   next();
 };
@@ -87,7 +87,7 @@ const optionalAuth = async (req, res, next) => {
     if (token) {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const result = await query(
-        'SELECT id, full_name, email, phone, membership_type, membership_points, email_verified FROM users WHERE id = $1',
+        'SELECT id, full_name, email, phone, membership_type, membership_points, email_verified FROM users WHERE id = ?',
         [decoded.userId]
       );
 
@@ -107,5 +107,6 @@ module.exports = {
   authenticateToken,
   requireAdmin,
   requireVerified,
-  optionalAuth
+  optionalAuth,
+  requireAdmin
 };

@@ -118,10 +118,13 @@ const formatDate = (date, locale = 'en-SA') => {
 };
 
 // Pagination helper
-const paginate = (page = 1, limit = 10) => {
-  const offset = (page - 1) * limit;
-  return { offset, limit };
-};
+function paginate(page, limit) {
+  const pageNum = Number(page) || 1;
+  const limitNum = Number(limit) || 20;
+  const offset = (pageNum - 1) * limitNum;
+  return { offset, limit: limitNum };
+}
+
 
 module.exports = {
   generateVerificationCode,

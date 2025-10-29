@@ -9,7 +9,7 @@ const router = express.Router();
 router.get('/', optionalAuth, async (req, res) => {
   try {
     const { page = 1, limit = 20 } = req.query;
-    const { offset, queryLimit } = paginate(page, limit);
+    const { offset, limit: queryLimit } = paginate(page, limit);
 
     const result = await query(
       `SELECT a.id, a.social_links, a.follower_count, a.bike_brands, a.created_at,

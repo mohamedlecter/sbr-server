@@ -47,7 +47,7 @@ router.post('/feedback', authenticateToken, [
 router.get('/feedback/public', optionalAuth, async (req, res) => {
   try {
     const { page = 1, limit = 10, rating } = req.query;
-    const { offset, queryLimit } = paginate(page, limit);
+    const { offset, limit: queryLimit } = paginate(page, limit);
 
     let whereConditions = ['f.is_public = true'];
     let queryParams = [];
@@ -97,7 +97,7 @@ router.get('/feedback/public', optionalAuth, async (req, res) => {
 router.get('/feedback/my', authenticateToken, async (req, res) => {
   try {
     const { page = 1, limit = 10 } = req.query;
-    const { offset, queryLimit } = paginate(page, limit);
+    const { offset, limit: queryLimit } = paginate(page, limit);
 
     const result = await query(
       `SELECT id, message, rating, feedback_type, is_public, created_at
@@ -286,7 +286,7 @@ router.put('/ambassadors/my', authenticateToken, [
 router.get('/ambassadors/approved', optionalAuth, async (req, res) => {
   try {
     const { page = 1, limit = 20 } = req.query;
-    const { offset, queryLimit } = paginate(page, limit);
+    const { offset, limit: queryLimit } = paginate(page, limit);
 
     const result = await query(
       `SELECT a.id, a.social_links, a.follower_count, a.bike_brands, a.created_at,

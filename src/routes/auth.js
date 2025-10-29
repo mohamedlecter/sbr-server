@@ -87,6 +87,84 @@ const register = async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+const registerAdmin = async (req, res) => {
+  // simailr to register but with admin privileges
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { full_name, email, phone, password } = req.body;
+
+    // Check if user already exists
+    const existingUser = await query(
+      'SELECT id FROM users WHERE email = ? OR phone = ?',
+      [email, phone]
+    );
+
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({
+        error: 'User already exists',
+        message: 'A user with this email or phone number already exists'
+      });
+    }
+
+    // Hash password
+    const saltRounds = 12;
+    const password_hash = await bcrypt.hash(password, saltRounds);
+
+    // Generate verification code
+    const verification_code = generateVerificationCode();
+    const verification_expires_at = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Create user
+    const result = await query(
+      `INSERT INTO users (full_name, email, phone, password_hash, verification_code, verification_expires_at, is_admin)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [full_name, email, phone, password_hash, verification_code, verification_expires_at, true]
+    );
+
+    // Get the created user
+    const userResult = await query(
+      'SELECT id, full_name, email, phone, is_admin, created_at FROM users WHERE email = ?',
+      [email]
+    );
+
+    const user = userResult.rows[0];
+
+    // Send verification code via email
+    try {
+      // await sendVerificationEmail(email, verification_code);
+    } catch (emailError) {
+      console.error('Failed to send verification email:', emailError);
+    }
+
+    // Send verification code via SMS if phone provided
+    if (phone) {
+      try {
+        // await sendVerificationSMS(phone, verification_code);
+      } catch (smsError) {
+        console.error('Failed to send verification SMS:', smsError);
+      }
+    }
+
+    res.status(201).json({
+      message: 'User registered successfully. Please verify your account.',
+      user: {
+        id: user.id,
+        full_name: user.full_name,
+        email: user.email,
+        phone: user.phone,
+        is_admin: user.is_admin,
+        created_at: user.created_at
+      }
+    });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
 
 // Verify user account
 const verifyAccount = async (req, res) => {
@@ -152,12 +230,12 @@ const login = async (req, res) => {
     const user = result.rows[0];
 
     // Check if account is verified
-    if (!user.email_verified) {
-      return res.status(401).json({ 
-        error: 'Account not verified',
-        message: 'Please verify your account before logging in'
-      });
-    }
+    // if (!user.email_verified) {
+    //   return res.status(401).json({ 
+    //     error: 'Account not verified',
+    //     message: 'Please verify your account before logging in'
+    //   });
+    // }
 
     // Verify password
     const isValidPassword = await bcrypt.compare(password, user.password_hash);
@@ -192,6 +270,57 @@ const login = async (req, res) => {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
+};
+const loginAdmin = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+  
+  const { email, password } = req.body;
+
+  const result = await query(
+    'SELECT id, full_name, email, phone, is_admin, password_hash FROM users WHERE email = ? AND is_admin = true',
+    [email]
+  );
+  
+  if (result.rows.length === 0) {
+    return res.status(401).json({ error: 'Invalid credentials or user is not an admin' });
+  }
+
+  const user = result.rows[0];
+  
+  const isValidPassword = await bcrypt.compare(password, user.password_hash);
+  if (!isValidPassword) {
+    return res.status(401).json({ error: 'Invalid credentials or user is not an admin' });
+  }
+
+  const token = jwt.sign(
+    { 
+      userId: user.id, 
+      email: user.email,
+      is_admin: user.is_admin
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+  );
+
+  res.json({
+    message: 'Login successful',
+    token,
+    user: {
+      id: user.id,
+      full_name: user.full_name,
+      email: user.email,
+      phone: user.phone,
+      is_admin: user.is_admin
+    }
+  });
+} catch (error) {
+  console.error('Login error:', error);
+  res.status(500).json({ error: 'Internal server error' });
+}
 };
 
 // Request password reset
@@ -308,8 +437,10 @@ const resetPasswordValidation = [
 
 // Define routes
 router.post('/register', [registerValidation, register]);
+router.post('/register-admin', [registerValidation, registerAdmin]);
 router.post('/verify', [verifyValidation, verifyAccount]);
 router.post('/login', [loginValidation, login]);
+router.post('/login-admin', [loginValidation, loginAdmin]);
 router.post('/request-password-reset', [resetRequestValidation, requestPasswordReset]);
 router.post('/reset-password', [resetPasswordValidation, resetPassword]);
 

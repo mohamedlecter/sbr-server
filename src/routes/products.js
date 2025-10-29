@@ -18,7 +18,7 @@ router.get('/categories', async (req, res) => {
       LEFT JOIN categories parent ON c.parent_id = parent.id
       LEFT JOIN categories child ON child.parent_id = c.id
       GROUP BY c.id, parent.name
-      ORDER BY c.parent_id NULLS FIRST, c.name
+      ORDER BY (c.parent_id IS NOT NULL), c.name
     `;
 
     const result = await query(queryText);
@@ -39,9 +39,10 @@ router.get('/categories', async (req, res) => {
 // Get single category with products
 router.get('/categories/:id', async (req, res) => {
   try {
-    const { id } = req.params;
+    const categoryId = req.params.id;
     const { page = 1, limit = 20, sort = 'name', order = 'asc' } = req.query;
     const { offset, limit: queryLimit } = paginate(page, limit);
+
 
     // Get category details
     const categoryResult = await query(
@@ -49,7 +50,7 @@ router.get('/categories/:id', async (req, res) => {
        FROM categories c
        LEFT JOIN categories parent ON c.parent_id = parent.id
        WHERE c.id = ?`,
-      [id]
+      [categoryId]
     );
 
     if (categoryResult.rows.length === 0) {
@@ -69,14 +70,14 @@ router.get('/categories/:id', async (req, res) => {
        JOIN brands b ON p.brand_id = b.id
        WHERE p.category_id = ? AND p.is_active = true
        ORDER BY p.${sortField} ${sortOrder}
-       LIMIT ? OFFSET ?`,
-      [id, queryLimit, offset]
+       LIMIT ${queryLimit} OFFSET ${offset}`,
+      [categoryId]
     );
 
     // Get total count
     const countResult = await query(
       'SELECT COUNT(*) FROM parts WHERE category_id = ? AND is_active = true',
-      [id]
+      [categoryId]
     );
 
     res.json({
@@ -99,7 +100,7 @@ router.get('/categories/:id', async (req, res) => {
 router.get('/brands', async (req, res) => {
   try {
     const { page = 1, limit = 50 } = req.query;
-    const { offset, queryLimit } = paginate(page, limit);
+    const { offset, limit: queryLimit } = paginate(page, limit);
 
     const result = await query(
       `SELECT b.*, COUNT(p.id) as parts_count
@@ -107,8 +108,7 @@ router.get('/brands', async (req, res) => {
        LEFT JOIN parts p ON b.id = p.brand_id AND p.is_active = true
        GROUP BY b.id
        ORDER BY b.name
-       LIMIT ? OFFSET ?`,
-      [queryLimit, offset]
+       LIMIT ${queryLimit} OFFSET ${offset}`,
     );
 
     // Get total count
@@ -132,14 +132,14 @@ router.get('/brands', async (req, res) => {
 // Get single brand with products
 router.get('/brands/:id', async (req, res) => {
   try {
-    const { id } = req.params;
+    const brandId = req.params.id;
     const { page = 1, limit = 20, sort = 'name', order = 'asc' } = req.query;
-    const { offset, queryLimit } = paginate(page, limit);
+    const { offset, limit: queryLimit } = paginate(page, limit);
 
     // Get brand details
     const brandResult = await query(
-      'SELECT * FROM brands WHERE id = ?',
-      [id]
+      `SELECT * FROM brands WHERE id = ?`,
+      [brandId]
     );
 
     if (brandResult.rows.length === 0) {
@@ -159,14 +159,14 @@ router.get('/brands/:id', async (req, res) => {
        JOIN categories c ON p.category_id = c.id
        WHERE p.brand_id = ? AND p.is_active = true
        ORDER BY p.${sortField} ${sortOrder}
-       LIMIT ? OFFSET ?`,
-      [id, queryLimit, offset]
+     LIMIT ${queryLimit} OFFSET ${offset}`,
+    [brandId]
     );
 
     // Get total count
     const countResult = await query(
-      'SELECT COUNT(*) FROM parts WHERE brand_id = ? AND is_active = true',
-      [id]
+      `SELECT COUNT(*) FROM parts WHERE brand_id = ? AND is_active = true`,
+      [brandId]
     );
 
     res.json({
@@ -202,47 +202,41 @@ router.get('/parts', optionalAuth, async (req, res) => {
       in_stock = false 
     } = req.query;
 
-    const { offset, queryLimit } = paginate(page, limit);
+    const { offset, limit: queryLimit } = paginate(page, limit);
     
     let whereConditions = ['p.is_active = true'];
     let queryParams = [];
-    let paramCount = 1;
 
     // Build WHERE clause dynamically
     if (search) {
-      whereConditions.push(`(p.name ILIKE $${paramCount} OR p.description ILIKE $${paramCount})`);
-      queryParams.push(`%${sanitizeString(search)}%`);
-      paramCount++;
+      whereConditions.push(`(LOWER(p.name) LIKE ? OR LOWER(p.description) LIKE ?)`);
+      queryParams.push(`%${sanitizeString(search).toLowerCase()}%`);
+      queryParams.push(`%${sanitizeString(search).toLowerCase()}%`);
     }
 
     if (category_id) {
-      whereConditions.push(`p.category_id = $${paramCount}`);
-      queryParams.push(category_id);
-      paramCount++;
+      whereConditions.push(`p.category_id = ?`);
+      queryParams.push(parseInt(category_id, 10));
     }
 
     if (brand_id) {
-      whereConditions.push(`p.brand_id = $${paramCount}`);
-      queryParams.push(brand_id);
-      paramCount++;
+      whereConditions.push(`p.brand_id = ?`);
+      queryParams.push(parseInt(brand_id, 10));
     }
 
     if (min_price) {
-      whereConditions.push(`p.selling_price >= $${paramCount}`);
+      whereConditions.push(`p.selling_price >= ?`);
       queryParams.push(parseFloat(min_price));
-      paramCount++;
     }
 
     if (max_price) {
-      whereConditions.push(`p.selling_price <= $${paramCount}`);
+      whereConditions.push(`p.selling_price <= ?`);
       queryParams.push(parseFloat(max_price));
-      paramCount++;
     }
 
     if (color) {
-      whereConditions.push(`p.color_options::text ILIKE $${paramCount}`);
-      queryParams.push(`%"${sanitizeString(color)}"%`);
-      paramCount++;
+      whereConditions.push(`JSON_SEARCH(color_options, 'one', ?) IS NOT NULL`);
+      queryParams.push(color);
     }
 
     if (in_stock === 'true') {
@@ -263,11 +257,10 @@ router.get('/parts', optionalAuth, async (req, res) => {
       JOIN categories c ON p.category_id = c.id
       ${whereClause}
       ORDER BY p.${sortField} ${sortOrder}
-      LIMIT $${paramCount} OFFSET $${paramCount + 1}
+      LIMIT ${queryLimit} OFFSET ${offset}
     `;
 
-    queryParams.push(queryLimit, offset);
-    const result = await query(partsQuery, queryParams);
+    const result = await query(partsQuery);
 
     // Get total count
     const countQuery = `
@@ -308,7 +301,7 @@ router.get('/parts', optionalAuth, async (req, res) => {
 // Get single part details
 router.get('/parts/:id', optionalAuth, async (req, res) => {
   try {
-    const { id } = req.params;
+    const partId = req.params.id;
 
     const result = await query(
       `SELECT p.*, b.name as brand_name, b.logo_url as brand_logo, 
@@ -317,7 +310,7 @@ router.get('/parts/:id', optionalAuth, async (req, res) => {
        JOIN brands b ON p.brand_id = b.id
        JOIN categories c ON p.category_id = c.id
        WHERE p.id = ? AND p.is_active = true`,
-      [id]
+      [partId]
     );
 
     if (result.rows.length === 0) {
@@ -333,9 +326,9 @@ router.get('/parts/:id', optionalAuth, async (req, res) => {
        JOIN brands b ON p.brand_id = b.id
        WHERE p.id != ? AND p.is_active = true 
        AND (p.category_id = ? OR p.brand_id = ?)
-       ORDER BY RANDOM()
+       ORDER BY RAND()
        LIMIT 6`,
-      [id, part.category_id, part.brand_id]
+      [partId, part.category_id, part.brand_id]
     );
 
     res.json({
@@ -459,11 +452,11 @@ router.get('/merchandise', optionalAuth, async (req, res) => {
 // Get single merchandise details
 router.get('/merchandise/:id', optionalAuth, async (req, res) => {
   try {
-    const { id } = req.params;
+    const merchandiseId = req.params.id;
 
     const result = await query(
-      'SELECT * FROM merchandise WHERE id = ? AND is_active = true',
-      [id]
+      `SELECT * FROM merchandise WHERE id = ? AND is_active = true`,
+      [merchandiseId]
     );
 
     if (result.rows.length === 0) {
@@ -477,9 +470,9 @@ router.get('/merchandise/:id', optionalAuth, async (req, res) => {
       `SELECT *
        FROM merchandise
        WHERE id != ? AND is_active = true
-       ORDER BY RANDOM()
+       ORDER BY RAND()
        LIMIT 6`,
-      [id]
+      [merchandiseId]
     );
 
     res.json({

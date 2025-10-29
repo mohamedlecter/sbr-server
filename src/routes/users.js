@@ -12,7 +12,7 @@ router.get('/profile', authenticateToken, async (req, res) => {
   try {
     const result = await query(
       `SELECT id, full_name, email, phone, membership_type, membership_points, 
-              email_verified, phone_verified, created_at, updated_at
+              email_verified, phone_verified, created_at, updated_at, is_admin
        FROM users WHERE id = ?`,
       [req.user.id]
     );
@@ -33,7 +33,8 @@ router.get('/profile', authenticateToken, async (req, res) => {
         email_verified: user.email_verified,
         phone_verified: user.phone_verified,
         created_at: user.created_at,
-        updated_at: user.updated_at
+        updated_at: user.updated_at,
+        is_admin: user.is_admin
       }
     });
   } catch (error) {
