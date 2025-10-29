@@ -3,6 +3,7 @@ const { body, validationResult } = require('express-validator');
 const { query, transaction } = require('../database/connection');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { paginate, sanitizeString } = require('../utils/helpers');
+const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
 
@@ -86,7 +87,7 @@ router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
 
     if (email_verified !== undefined) {
       whereConditions.push(`u.email_verified = ?`);
-      queryParams.push(email_verified === 'true');
+      queryParams.push(email_verified === 'true' ? 1 : 0);
     }
 
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
@@ -98,13 +99,13 @@ router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
        ${whereClause}
        GROUP BY u.id
        ORDER BY u.created_at DESC
-       LIMIT ? OFFSET ?`,
-      [...queryParams, queryLimit, offset]
+       LIMIT ${queryLimit} OFFSET ${offset}`,
+      queryParams
     );
 
     // Get total count
     const countResult = await query(
-      `SELECT COUNT(*) FROM users u ${whereClause}`,
+      `SELECT COUNT(*) as total FROM users u ${whereClause}`,
       queryParams
     );
 
@@ -113,8 +114,8 @@ router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total: parseInt(countResult.rows[0].count),
-        pages: Math.ceil(countResult.rows[0].count / limit)
+        total: parseInt(countResult.rows[0].total),
+        pages: Math.ceil(countResult.rows[0].total / limit)
       }
     });
   } catch (error) {
@@ -152,17 +153,13 @@ router.put('/users/:id/membership', authenticateToken, requireAdmin, [
     }
 
     values.push(id);
-    const queryText = `UPDATE users SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = $${paramCount} RETURNING *`;
+    const queryText = `UPDATE users SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
 
     const result = await query(queryText, values);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
+    console.log("result", result);
     res.json({
       message: 'User membership updated successfully',
-      user: result.rows[0]
+      user: result
     });
   } catch (error) {
     console.error('Update user membership error:', error);
@@ -207,13 +204,13 @@ router.get('/orders', authenticateToken, requireAdmin, async (req, res) => {
        JOIN addresses a ON o.shipping_address_id = a.id
        ${whereClause}
        ORDER BY o.created_at DESC
-       LIMIT $${paramCount} OFFSET $${paramCount + 1}`,
-      [...queryParams, queryLimit, offset]
+       LIMIT ${queryLimit} OFFSET ${offset}`,
+      queryParams
     );
 
     // Get total count
     const countResult = await query(
-      `SELECT COUNT(*) FROM orders o ${whereClause}`,
+      `SELECT COUNT(*) as total FROM orders o ${whereClause}`,
       queryParams
     );
 
@@ -222,8 +219,8 @@ router.get('/orders', authenticateToken, requireAdmin, async (req, res) => {
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total: parseInt(countResult.rows[0].count),
-        pages: Math.ceil(countResult.rows[0].count / limit)
+        total: parseInt(countResult.rows[0].total),
+        pages: Math.ceil(countResult.rows[0].total / limit)
       }
     });
   } catch (error) {
@@ -232,6 +229,16 @@ router.get('/orders', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
+router.get('/orders/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await query('SELECT * FROM orders WHERE id = ?', [id]);
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Get order error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 // Update order status
 router.put('/orders/:id/status', authenticateToken, requireAdmin, [
   body('status').isIn(['pending', 'paid', 'shipped', 'delivered', 'cancelled']).withMessage('Valid order status is required'),
@@ -257,7 +264,7 @@ router.put('/orders/:id/status', authenticateToken, requireAdmin, [
     }
 
     values.push(id);
-    const queryText = `UPDATE orders SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = $${paramCount} RETURNING *`;
+    const queryText = `UPDATE orders SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
 
     const result = await query(queryText, values);
 
@@ -349,8 +356,8 @@ router.get('/products', authenticateToken, requireAdmin, async (req, res) => {
         `}
       ) as combined
       ORDER BY created_at DESC
-      LIMIT ? OFFSET ?`,
-      [...partsParams, ...merchParams, queryLimit, offset]
+      LIMIT ${queryLimit} OFFSET ${offset}`,
+      [...partsParams, ...merchParams]
     );
 
     // Get total count
@@ -402,6 +409,8 @@ router.post('/parts', authenticateToken, requireAdmin, [
       quantity, sku, weight, images = [], color_options = [], compatibility = []
     } = req.body;
 
+    const id = uuidv4();
+
     // Verify brand and category exist
     const [brandResult, categoryResult] = await Promise.all([
       query('SELECT id FROM brands WHERE id = ?', [brand_id]),
@@ -416,18 +425,20 @@ router.post('/parts', authenticateToken, requireAdmin, [
       return res.status(404).json({ error: 'Category not found' });
     }
 
-    const result = await query(
-      `INSERT INTO parts (brand_id, category_id, name, description, original_price, selling_price, 
+     await query(
+      `INSERT INTO parts (id, brand_id, category_id, name, description, original_price, selling_price, 
                          quantity, sku, weight, images, color_options, compatibility)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?0, ?1, ?2)
-       RETURNING *`,
-      [brand_id, category_id, sanitizeString(name), description, original_price, selling_price,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       `,
+      [id, brand_id, category_id, sanitizeString(name), description, original_price, selling_price,
        quantity, sku, weight, JSON.stringify(images), JSON.stringify(color_options), JSON.stringify(compatibility)]
     );
 
+    const partResult = await query('SELECT * FROM parts WHERE id = ?', [id]);
+
     res.status(201).json({
       message: 'Part created successfully',
-      part: result.rows[0]
+      part: partResult.rows[0]
     });
   } catch (error) {
     console.error('Create part error:', error);
@@ -477,36 +488,44 @@ router.post('/merchandise', authenticateToken, requireAdmin, [
 });
 
 // Create new brand
-router.post('/brands', authenticateToken, requireAdmin, [
+router.post('/brands',
+  authenticateToken,
+  requireAdmin,
   body('name').trim().notEmpty().withMessage('Brand name is required'),
   body('description').optional().isString().withMessage('Description must be a string'),
-  body('logo_url').optional().isURL().withMessage('Logo URL must be a valid URL')
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+  body('logo_url').optional().isURL().withMessage('Logo URL must be a valid URL'),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const { name, description, logo_url } = req.body;
+
+      // Generate a UUID manually since your table uses UUIDs
+      const id = uuidv4();
+
+      // Insert the new brand
+      await query(
+        'INSERT INTO brands (id, name, description, logo_url) VALUES (?, ?, ?, ?)',
+        [id, sanitizeString(name), description ?? null, logo_url ?? null]
+      );
+
+      // Retrieve the newly created brand
+      const brandResult = await query('SELECT * FROM brands WHERE id = ?', [id]);
+
+      res.status(201).json({
+        message: 'Brand created successfully',
+        brand: brandResult.rows[0],
+      });
+    } catch (error) {
+      console.error('Create brand error:', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
-
-    const { name, description, logo_url } = req.body;
-
-    const result = await query(
-      'INSERT INTO brands (name, description, logo_url) VALUES (?, ?, ?) RETURNING *',
-      [sanitizeString(name), description, logo_url]
-    );
-
-    res.status(201).json({
-      message: 'Brand created successfully',
-      brand: result.rows[0]
-    });
-  } catch (error) {
-    if (error.code === '23505') { // Unique constraint violation
-      return res.status(400).json({ error: 'Brand with this name already exists' });
-    }
-    console.error('Create brand error:', error);
-    res.status(500).json({ error: 'Internal server error' });
   }
-});
+);
+
 
 // Update brand
 router.put('/brands/:id', authenticateToken, requireAdmin, [
@@ -550,17 +569,13 @@ router.put('/brands/:id', authenticateToken, requireAdmin, [
     }
 
     values.push(id);
-    const queryText = `UPDATE brands SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = $${paramCount} RETURNING *`;
+    const queryText = `UPDATE brands SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
 
     const result = await query(queryText, values);
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Brand not found' });
-    }
-
     res.json({
       message: 'Brand updated successfully',
-      brand: result.rows[0]
+      brand: result
     });
   } catch (error) {
     if (error.code === '23505') { // Unique constraint violation
@@ -590,7 +605,7 @@ router.delete('/brands/:id', authenticateToken, requireAdmin, async (req, res) =
     }
 
     const result = await query(
-      'DELETE FROM brands WHERE id = ? RETURNING id',
+      'DELETE FROM brands WHERE id = ?',
       [id]
     );
 
@@ -620,6 +635,8 @@ router.post('/categories', authenticateToken, requireAdmin, [
 
     const { name, description, parent_id, image_url } = req.body;
 
+    const id = uuidv4();
+
     // Verify parent category exists if provided
     if (parent_id) {
       const parentResult = await query(
@@ -632,14 +649,16 @@ router.post('/categories', authenticateToken, requireAdmin, [
       }
     }
 
-    const result = await query(
-      'INSERT INTO categories (name, description, parent_id, image_url) VALUES (?, ?, ?, ?) RETURNING *',
-      [sanitizeString(name), description, parent_id, image_url]
+    await query(
+      'INSERT INTO categories (id, name, description, parent_id, image_url) VALUES (?, ?, ?, ?, ?)',
+      [id, sanitizeString(name), description ?? null, parent_id ?? null, image_url ?? null]
     );
+
+    const categoryResult = await query('SELECT * FROM categories WHERE id = ?', [id]);
 
     res.status(201).json({
       message: 'Category created successfully',
-      category: result.rows[0]
+      category: categoryResult.rows[0]
     });
   } catch (error) {
     console.error('Create category error:', error);
@@ -713,17 +732,13 @@ router.put('/categories/:id', authenticateToken, requireAdmin, [
     }
 
     values.push(id);
-    const queryText = `UPDATE categories SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = $${paramCount} RETURNING *`;
+    const queryText = `UPDATE categories SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
 
     const result = await query(queryText, values);
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Category not found' });
-    }
-
     res.json({
       message: 'Category updated successfully',
-      category: result.rows[0]
+      category: result
     });
   } catch (error) {
     console.error('Update category error:', error);
@@ -763,7 +778,7 @@ router.delete('/categories/:id', authenticateToken, requireAdmin, async (req, re
     }
 
     const result = await query(
-      'DELETE FROM categories WHERE id = ? RETURNING id',
+      'DELETE FROM categories WHERE id = ?',
       [id]
     );
 
@@ -789,7 +804,7 @@ router.get('/feedback', authenticateToken, requireAdmin, async (req, res) => {
     let paramCount = 1;
 
     if (feedback_type) {
-      whereClause = `WHERE f.feedback_type = $${paramCount}`;
+      whereClause = `WHERE f.feedback_type = ?`;
       queryParams.push(feedback_type);
       paramCount++;
     }
@@ -800,13 +815,13 @@ router.get('/feedback', authenticateToken, requireAdmin, async (req, res) => {
        JOIN users u ON f.user_id = u.id
        ${whereClause}
        ORDER BY f.created_at DESC
-       LIMIT $${paramCount} OFFSET $${paramCount + 1}`,
-      [...queryParams, queryLimit, offset]
+       LIMIT ${queryLimit} OFFSET ${offset}`,
+      queryParams
     );
 
     // Get total count
     const countResult = await query(
-      `SELECT COUNT(*) FROM feedbacks f ${whereClause}`,
+      `SELECT COUNT(*) as total FROM feedbacks f ${whereClause}`,
       queryParams
     );
 
@@ -815,8 +830,8 @@ router.get('/feedback', authenticateToken, requireAdmin, async (req, res) => {
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total: parseInt(countResult.rows[0].count),
-        pages: Math.ceil(countResult.rows[0].count / limit)
+        total: parseInt(countResult.rows[0].total),
+        pages: Math.ceil(countResult.rows[0].total / limit)
       }
     });
   } catch (error) {
@@ -836,7 +851,7 @@ router.get('/ambassadors', authenticateToken, requireAdmin, async (req, res) => 
     let paramCount = 1;
 
     if (status) {
-      whereClause = `WHERE a.status = $${paramCount}`;
+      whereClause = `WHERE a.status = ?`;
       queryParams.push(status);
       paramCount++;
     }
@@ -847,13 +862,13 @@ router.get('/ambassadors', authenticateToken, requireAdmin, async (req, res) => 
        JOIN users u ON a.user_id = u.id
        ${whereClause}
        ORDER BY a.created_at DESC
-       LIMIT $${paramCount} OFFSET $${paramCount + 1}`,
-      [...queryParams, queryLimit, offset]
+       LIMIT ${queryLimit} OFFSET ${offset}`,
+      queryParams
     );
 
     // Get total count
     const countResult = await query(
-      `SELECT COUNT(*) FROM ambassadors a ${whereClause}`,
+      `SELECT COUNT(*) as total FROM ambassadors a ${whereClause}`,
       queryParams
     );
 
@@ -862,8 +877,8 @@ router.get('/ambassadors', authenticateToken, requireAdmin, async (req, res) => 
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total: parseInt(countResult.rows[0].count),
-        pages: Math.ceil(countResult.rows[0].count / limit)
+        total: parseInt(countResult.rows[0].total),
+        pages: Math.ceil(countResult.rows[0].total / limit)
       }
     });
   } catch (error) {
@@ -888,26 +903,20 @@ router.put('/ambassadors/:id/status', authenticateToken, requireAdmin, [
 
     const updates = [`status = ?`];
     const values = [status];
-    let paramCount = 2;
 
     if (admin_notes) {
-      updates.push(`admin_notes = $${paramCount}`);
+      updates.push(`admin_notes = ?`);
       values.push(admin_notes);
-      paramCount++;
     }
 
     values.push(id);
-    const queryText = `UPDATE ambassadors SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = $${paramCount} RETURNING *`;
+    const queryText = `UPDATE ambassadors SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
 
     const result = await query(queryText, values);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Ambassador application not found' });
-    }
-
+    console.log("result", result);
     res.json({
       message: 'Ambassador application status updated successfully',
-      ambassador: result.rows[0]
+      ambassador: result
     });
   } catch (error) {
     console.error('Update ambassador status error:', error);

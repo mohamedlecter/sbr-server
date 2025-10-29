@@ -24,18 +24,27 @@ pool.getConnection()
   });
 
 // Helper function to execute queries
+// Helper function to execute queries
 const query = async (text, params = []) => {
   const start = Date.now();
   try {
-    const [rows, fields] = await pool.execute(text, params);
+    const [result, fields] = await pool.execute(text, params);
     const duration = Date.now() - start;
-    console.log('Executed query', { text, duration, rows: rows.length });
-    return { rows, fields, rowCount: rows.length };
+    console.log('Executed query', { text, duration });
+
+    // If it's an INSERT/UPDATE/DELETE, result is an object (not an array)
+    if (result.insertId !== undefined) {
+      return { insertId: result.insertId, affectedRows: result.affectedRows };
+    }
+
+    // Otherwise (SELECT queries)
+    return { rows: result, fields, rowCount: result.length };
   } catch (error) {
     console.error('Database query error:', error);
     throw error;
   }
 };
+
 
 // Helper function to get a connection for transactions
 const getConnection = async () => {
