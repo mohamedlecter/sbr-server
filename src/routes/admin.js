@@ -268,7 +268,7 @@ router.put('/orders/:id/status', authenticateToken, requireAdmin, [
 
     const result = await query(queryText, values);
 
-    if (result.rows.length === 0) {
+    if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Order not found' });
     }
 
@@ -281,108 +281,153 @@ router.put('/orders/:id/status', authenticateToken, requireAdmin, [
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
 // Get all products (parts and merchandise)
 router.get('/products', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { page = 1, limit = 20, type, search, brand_id, category_id } = req.query;
-    const { offset, limit: queryLimit } = paginate(page, limit);
+    // Shared query params
+    const { 
+      page = 1, 
+      limit = 20, 
+      search, 
+      category_id, 
+      brand_id, 
+      min_price, 
+      max_price, 
+      color, 
+      size,
+      sort = 'name', 
+      order = 'asc',
+      in_stock = false 
+    } = req.query;
 
-    // Build WHERE conditions for parts
-    let partsConditions = [];
+    // Parts query setup
+    const { offset: partsOffset, limit: partsQueryLimit } = paginate(page, limit);
+    let partsWhere = ['p.is_active = true'];
     let partsParams = [];
-    
-    if (!type || type === 'part') {
-      if (search) {
-        partsConditions.push('LOWER(p.name) LIKE ?');
-        partsParams.push(`%${sanitizeString(search).toLowerCase()}%`);
-      }
-      if (brand_id) {
-        partsConditions.push('p.brand_id = ?');
-        partsParams.push(parseInt(brand_id, 10));
-      }
-      if (category_id) {
-        partsConditions.push('p.category_id = ?');
-        partsParams.push(parseInt(category_id, 10));
-      }
+
+    if (search) {
+      partsWhere.push(`(LOWER(p.name) LIKE ? OR LOWER(p.description) LIKE ?)`);
+      partsParams.push(`%${sanitizeString(search).toLowerCase()}%`);
+      partsParams.push(`%${sanitizeString(search).toLowerCase()}%`);
     }
-    
-    // Build WHERE conditions for merchandise
-    let merchConditions = [];
+    if (category_id) {
+      partsWhere.push(`p.category_id = ?`);
+      partsParams.push(parseInt(category_id, 10));
+    }
+    if (brand_id) {
+      partsWhere.push(`p.brand_id = ?`);
+      partsParams.push(parseInt(brand_id, 10));
+    }
+    if (min_price) {
+      partsWhere.push(`p.selling_price >= ?`);
+      partsParams.push(parseFloat(min_price));
+    }
+    if (max_price) {
+      partsWhere.push(`p.selling_price <= ?`);
+      partsParams.push(parseFloat(max_price));
+    }
+    if (color) {
+      partsWhere.push(`JSON_SEARCH(color_options, 'one', ?) IS NOT NULL`);
+      partsParams.push(color);
+    }
+    const partsValidSort = ['name', 'selling_price', 'created_at', 'original_price'];
+    const partsSortField = partsValidSort.includes(sort) ? sort : 'name';
+    const partsSortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+    const partsWhereClause = partsWhere.length > 0 ? `WHERE ${partsWhere.join(' AND ')}` : '';
+    const partsSql = `
+      SELECT p.*, b.name as brand_name, b.logo_url as brand_logo, c.name as category_name
+      FROM parts p
+      JOIN brands b ON p.brand_id = b.id
+      JOIN categories c ON p.category_id = c.id
+      ${partsWhereClause}
+      ORDER BY p.${partsSortField} ${partsSortOrder}
+      LIMIT ${partsQueryLimit} OFFSET ${partsOffset}
+    `;
+    const partsCountSql = `
+      SELECT COUNT(*)
+      FROM parts p
+      JOIN brands b ON p.brand_id = b.id
+      JOIN categories c ON p.category_id = c.id
+      ${partsWhereClause}
+    `;
+
+    // Merchandise query setup
+    const { offset: merchOffset, limit: merchQueryLimit } = paginate(page, limit);
+    let merchWhere = ['m.is_active = 1'];
     let merchParams = [];
     
-    if (!type || type === 'merch') {
-      if (search) {
-        merchConditions.push('LOWER(m.name) LIKE ?');
-        merchParams.push(`%${sanitizeString(search).toLowerCase()}%`);
-      }
+    if (search) {
+      merchWhere.push(`(LOWER(m.name) LIKE ? OR LOWER(m.description) LIKE ?)`);
+      merchParams.push(`%${sanitizeString(search).toLowerCase()}%`);
+      merchParams.push(`%${sanitizeString(search).toLowerCase()}%`);
     }
+    if (min_price) {
+      merchWhere.push(`m.price >= ?`);
+      merchParams.push(parseFloat(min_price));
+    }
+    if (max_price) {
+      merchWhere.push(`m.price <= ?`);
+      merchParams.push(parseFloat(max_price));
+    }
+    if (color) {
+      merchWhere.push(`JSON_SEARCH(color_options, 'one', ?) IS NOT NULL`);
+      merchParams.push(color);
+    }
+    if (size) {
+      merchWhere.push(`JSON_SEARCH(size_options, 'one', ?) IS NOT NULL`);
+      merchParams.push(size);
+    }
+    if (in_stock === 'true') {
+      merchWhere.push(`m.quantity > 0`);
+    }
+    
+    const merchWhereClause = merchWhere.length ? `WHERE ${merchWhere.join(' AND ')}` : '';
+    const validSortFields = ['name', 'price', 'created_at'];
+    const sortField = validSortFields.includes(sort) ? sort : 'name';
+    const sortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
 
-    const partsWhereClause = partsConditions.length > 0 ? `WHERE ${partsConditions.join(' AND ')}` : '';
-    const merchWhereClause = merchConditions.length > 0 ? `WHERE ${merchConditions.join(' AND ')}` : '';
+    const merchSql = `
+    SELECT m.*
+    FROM merchandise m
+    ${merchWhereClause}
+    ORDER BY m.${sortField} ${sortOrder}
+    LIMIT ${merchQueryLimit} OFFSET ${merchOffset}  
+    `;
+    const merchCountSql = `
+SELECT COUNT(*) AS count FROM merchandise m ${merchWhereClause}
+    `;
 
-    const result = await query(
-      `SELECT * FROM (
-        SELECT 
-          p.id as id,
-          p.name as name,
-          'part' as type,
-          p.selling_price as price,
-          NULL as merch_price,
-          p.quantity as quantity,
-          p.is_active as is_active,
-          p.created_at as created_at,
-          b.name as brand_name,
-          c.name as category_name
-        FROM parts p
-        LEFT JOIN brands b ON p.brand_id = b.id
-        LEFT JOIN categories c ON p.category_id = c.id
-        ${partsWhereClause}
-        ${!type || type === 'merch' ? '' : 'UNION ALL'}
-        ${!type || type === 'merch' ? '' : `
-        SELECT 
-          m.id as id,
-          m.name as name,
-          'merch' as type,
-          NULL as price,
-          m.price as merch_price,
-          m.quantity as quantity,
-          m.is_active as is_active,
-          m.created_at as created_at,
-          NULL as brand_name,
-          NULL as category_name
-        FROM merchandise m
-        ${merchWhereClause}
-        `}
-      ) as combined
-      ORDER BY created_at DESC
-      LIMIT ${queryLimit} OFFSET ${offset}`,
-      [...partsParams, ...merchParams]
-    );
-
-    // Get total count
-    const countQuery = type === 'merch' 
-      ? `SELECT COUNT(*) as count FROM merchandise m ${merchWhereClause}`
-      : type === 'part'
-      ? `SELECT COUNT(*) as count FROM parts p ${partsWhereClause}`
-      : `SELECT (SELECT COUNT(*) FROM parts p ${partsWhereClause}) + (SELECT COUNT(*) FROM merchandise m ${merchWhereClause}) as count`;
-    const countResult = await query(countQuery, type === 'merch' ? merchParams : type === 'part' ? partsParams : [...partsParams, ...merchParams]);
+    const [partsRows, partsCountResult, merchRows, merchCountResult] = await Promise.all([
+      query(partsSql),
+      query(partsCountSql, partsParams),
+      query(merchSql),
+      query(merchCountSql, merchParams)
+    ]);
+    
 
     res.json({
-      products: result.rows,
+      parts: partsRows.rows,
+      merchandise: merchRows.rows,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total: parseInt(countResult.rows[0].count),
-        pages: Math.ceil(countResult.rows[0].count / limit)
-      }
+        total: parseInt(partsCountResult.rows[0]['COUNT(*)']),
+        pages: Math.ceil(partsCountResult.rows[0]['COUNT(*)'] / limit)
+      },
+      merchandise_pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: parseInt(merchCountResult.rows[0]['COUNT(*)']),
+        pages: Math.ceil(merchCountResult.rows[0]['COUNT(*)'] / limit)
+      },
+      filters: { search, category_id, brand_id, min_price, max_price, color, size, in_stock, sort, order }
     });
+    
   } catch (error) {
-    console.error('Get products error:', error);
+    console.error('Get products (unified) error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
 // Create new part
 router.post('/parts', authenticateToken, requireAdmin, [
   body('brand_id').isUUID().withMessage('Valid brand ID is required'),
@@ -445,7 +490,6 @@ router.post('/parts', authenticateToken, requireAdmin, [
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
 // Create new merchandise
 router.post('/merchandise', authenticateToken, requireAdmin, [
   body('name').trim().notEmpty().withMessage('Merchandise name is required'),
@@ -483,6 +527,128 @@ router.post('/merchandise', authenticateToken, requireAdmin, [
     });
   } catch (error) {
     console.error('Create merchandise error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/parts/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await query('SELECT * FROM parts WHERE id = ?', [id]);
+    res.json({ part: result.rows[0] });
+  } catch (error) {
+    console.error('Get part error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/merchandise/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await query('SELECT * FROM merchandise WHERE id = ?', [id]);
+    res.json({ merchandise: result.rows[0] });
+  } catch (error) {
+    console.error('Get merchandise error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.put('/parts/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const fields = ['name','description','original_price','selling_price','quantity','sku','weight','images','color_options','compatibility'];
+    const updates = [];
+    const params = [];
+
+    fields.forEach(field => {
+      if (req.body[field] !== undefined) {
+        updates.push(`${field} = ?`);
+        if (['images','color_options','compatibility'].includes(field)) {
+          params.push(JSON.stringify(req.body[field]));
+        } else {
+          params.push(req.body[field]);
+        }
+      }
+    });
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields provided for update' });
+    }
+
+    params.push(id); // for WHERE clause
+    const sql = `UPDATE parts SET ${updates.join(', ')} WHERE id = ?`;
+
+    await query(sql, params);
+
+    res.json({ message: 'Part updated successfully' });
+
+  } catch (error) {
+    console.error('Update part error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.put('/merchandise/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const fields = ['name','description','price','quantity','sku','weight','images','size_options','color_options'];
+    const updates = [];
+    const params = [];
+
+    // Build update query dynamically based on provided fields
+    fields.forEach(field => {
+      if (req.body.hasOwnProperty(field)) {
+        updates.push(`${field} = ?`);
+        let value = req.body[field];
+
+        // If arrays, stringify
+        if (['images','size_options','color_options'].includes(field)) {
+          value = value ? JSON.stringify(value) : null;
+        }
+
+        // Convert undefined to null for SQL
+        params.push(value !== undefined ? value : null);
+      }
+    });
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields provided for update' });
+    }
+
+    params.push(id); // for WHERE clause
+    const sql = `UPDATE merchandise SET ${updates.join(', ')} WHERE id = ?`;
+
+    await query(sql, params);
+
+    res.json({
+      message: 'Merchandise updated successfully',
+    });
+
+  } catch (error) {
+    console.error('Update merchandise error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.delete('/parts/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await query('DELETE FROM parts WHERE id = ?', [id]);
+    res.json({ message: 'Part deleted successfully' });
+  } catch (error) {
+    console.error('Delete part error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.delete('/merchandise/:id', authenticateToken, requireAdmin, async (req, res) => {
+
+  try {
+    const { id } = req.params;
+    await query('DELETE FROM merchandise WHERE id = ?', [id]);
+    res.json({ message: 'Merchandise deleted successfully' });
+  } catch (error) {
+    console.error('Delete merchandise error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -525,7 +691,6 @@ router.post('/brands',
     }
   }
 );
-
 
 // Update brand
 router.put('/brands/:id', authenticateToken, requireAdmin, [
@@ -609,7 +774,7 @@ router.delete('/brands/:id', authenticateToken, requireAdmin, async (req, res) =
       [id]
     );
 
-    if (result.rows.length === 0) {
+    if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Brand not found' });
     }
 
@@ -782,7 +947,7 @@ router.delete('/categories/:id', authenticateToken, requireAdmin, async (req, re
       [id]
     );
 
-    if (result.rows.length === 0) {
+    if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Category not found' });
     }
 

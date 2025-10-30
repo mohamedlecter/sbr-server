@@ -32,13 +32,16 @@ const query = async (text, params = []) => {
     const duration = Date.now() - start;
     console.log('Executed query', { text, duration });
 
-    // If it's an INSERT/UPDATE/DELETE, result is an object (not an array)
-    if (result.insertId !== undefined) {
-      return { insertId: result.insertId, affectedRows: result.affectedRows };
+    // SELECT queries return an array of rows
+    if (Array.isArray(result)) {
+      return { rows: result, fields, rowCount: result.length };
     }
 
-    // Otherwise (SELECT queries)
-    return { rows: result, fields, rowCount: result.length };
+    // Non-SELECT (INSERT/UPDATE/DELETE) return an OkPacket-like object
+    return {
+      affectedRows: result?.affectedRows ?? 0,
+      insertId: result?.insertId ?? null
+    };
   } catch (error) {
     console.error('Database query error:', error);
     throw error;

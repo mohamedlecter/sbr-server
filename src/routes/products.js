@@ -262,6 +262,12 @@ router.get('/parts', optionalAuth, async (req, res) => {
 
     const result = await query(partsQuery);
 
+    // exclude original_price from the result
+    const parts = result.rows.map(part => {
+      const { original_price, ...otherFields } = part;
+      return otherFields;
+    });
+
     // Get total count
     const countQuery = `
       SELECT COUNT(*)
@@ -273,7 +279,7 @@ router.get('/parts', optionalAuth, async (req, res) => {
     const countResult = await query(countQuery, queryParams.slice(0, -2));
 
     res.json({
-      parts: result.rows,
+      parts: parts,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -317,19 +323,33 @@ router.get('/parts/:id', optionalAuth, async (req, res) => {
       return res.status(404).json({ error: 'Part not found' });
     }
 
-    const part = result.rows[0];
+    const partRow = result.rows[0];
+    const { original_price, ...part } = partRow; // keep category_id & brand_id
 
-    // Get related parts (same category or brand)
-    const relatedResult = await query(
+
+    let relatedResult = await query(
       `SELECT p.*, b.name as brand_name, b.logo_url as brand_logo
        FROM parts p
        JOIN brands b ON p.brand_id = b.id
-       WHERE p.id != ? AND p.is_active = true 
-       AND (p.category_id = ? OR p.brand_id = ?)
+       WHERE p.id != ? AND p.is_active = true
+         AND (p.category_id = ? OR p.brand_id = ?)
        ORDER BY RAND()
        LIMIT 6`,
       [partId, part.category_id, part.brand_id]
     );
+    
+    if (relatedResult.rows.length === 0) {
+      relatedResult = await query(
+        `SELECT p.*, b.name as brand_name, b.logo_url as brand_logo
+         FROM parts p
+         JOIN brands b ON p.brand_id = b.id
+         WHERE p.id != ? AND p.is_active = true
+         ORDER BY RAND()
+         LIMIT 6`,
+        [partId]
+      );
+    }
+    
 
     res.json({
       part,
@@ -357,72 +377,59 @@ router.get('/merchandise', optionalAuth, async (req, res) => {
       in_stock = false 
     } = req.query;
 
-    const { offset, queryLimit } = paginate(page, limit);
+    const { offset, limit: queryLimit } = paginate(page, limit);
     
-    let whereConditions = ['m.is_active = true'];
+    let whereConditions = ['m.is_active = 1'];
     let queryParams = [];
-    let paramCount = 1;
 
-    // Build WHERE clause dynamically
     if (search) {
-      whereConditions.push(`(m.name ILIKE $${paramCount} OR m.description ILIKE $${paramCount})`);
-      queryParams.push(`%${sanitizeString(search)}%`);
-      paramCount++;
+      whereConditions.push('(LOWER(m.name) LIKE ? OR LOWER(m.description) LIKE ?)');
+      queryParams.push(`%${sanitizeString(search).toLowerCase()}%`);
+      queryParams.push(`%${sanitizeString(search).toLowerCase()}%`);
     }
 
     if (min_price) {
-      whereConditions.push(`m.price >= $${paramCount}`);
+      whereConditions.push('m.price >= ?');
       queryParams.push(parseFloat(min_price));
-      paramCount++;
     }
 
     if (max_price) {
-      whereConditions.push(`m.price <= $${paramCount}`);
+      whereConditions.push('m.price <= ?');
       queryParams.push(parseFloat(max_price));
-      paramCount++;
     }
 
     if (color) {
-      whereConditions.push(`m.color_options::text ILIKE $${paramCount}`);
-      queryParams.push(`%"${sanitizeString(color)}"%`);
-      paramCount++;
+      whereConditions.push('JSON_SEARCH(m.color_options, "one", ?) IS NOT NULL');
+      queryParams.push(color);
     }
 
     if (size) {
-      whereConditions.push(`m.size_options::text ILIKE $${paramCount}`);
-      queryParams.push(`%"${sanitizeString(size)}"%`);
-      paramCount++;
+      whereConditions.push('JSON_SEARCH(m.size_options, "one", ?) IS NOT NULL');
+      queryParams.push(size);
     }
 
     if (in_stock === 'true') {
-      whereConditions.push(`m.quantity > 0`);
+      whereConditions.push('m.quantity > 0');
     }
 
     const validSortFields = ['name', 'price', 'created_at'];
     const sortField = validSortFields.includes(sort) ? sort : 'name';
     const sortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
 
-    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+    const whereClause = whereConditions.length ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
-    // Get merchandise with pagination
     const merchandiseQuery = `
-      SELECT *
-      FROM merchandise m
-      ${whereClause}
-      ORDER BY m.${sortField} ${sortOrder}
-      LIMIT $${paramCount} OFFSET $${paramCount + 1}
-    `;
-
-    queryParams.push(queryLimit, offset);
-    const result = await query(merchandiseQuery, queryParams);
-
-    // Get total count
-    const countQuery = `
-      SELECT COUNT(*)
-      FROM merchandise m
-      ${whereClause}
-    `;
-    const countResult = await query(countQuery, queryParams.slice(0, -2));
+    SELECT m.*
+    FROM merchandise m
+    ${whereClause}
+    ORDER BY m.${sortField} ${sortOrder}
+    LIMIT ${queryLimit} OFFSET ${offset}
+  `;
+  
+  const result = await query(merchandiseQuery, queryParams);
+  
+    const countQuery = `SELECT COUNT(*) AS count FROM merchandise m ${whereClause}`;
+    const countResult = await query(countQuery, queryParams);
 
     res.json({
       merchandise: result.rows,
@@ -432,22 +439,14 @@ router.get('/merchandise', optionalAuth, async (req, res) => {
         total: parseInt(countResult.rows[0].count),
         pages: Math.ceil(countResult.rows[0].count / limit)
       },
-      filters: {
-        search,
-        min_price,
-        max_price,
-        color,
-        size,
-        in_stock,
-        sort,
-        order
-      }
+      filters: { search, min_price, max_price, color, size, in_stock, sort, order }
     });
   } catch (error) {
     console.error('Get merchandise error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
 
 // Get single merchandise details
 router.get('/merchandise/:id', optionalAuth, async (req, res) => {
