@@ -90,27 +90,35 @@ router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
       queryParams.push(email_verified === 'true' ? 1 : 0);
     }
 
-    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+    const whereClause = whereConditions.length > 0 ? `AND ${whereConditions.join(' AND ')}` : '';
 
     const result = await query(
-      `SELECT u.*, COUNT(o.id) as order_count, COALESCE(SUM(o.total_amount), 0) as total_spent
-       FROM users u
-       LEFT JOIN orders o ON u.id = o.user_id
-       ${whereClause}
-       GROUP BY u.id
-       ORDER BY u.created_at DESC
-       LIMIT ${queryLimit} OFFSET ${offset}`,
+      `SELECT 
+          u.*, 
+          COUNT(o.id) AS order_count, 
+          COALESCE(SUM(o.total_amount), 0) AS total_spent
+        FROM users u
+        LEFT JOIN orders o ON u.id = o.user_id
+        WHERE u.is_admin = false
+        ${whereClause}
+        GROUP BY u.id
+        ORDER BY u.created_at DESC
+        LIMIT ${queryLimit} OFFSET ${offset}`,
       queryParams
     );
 
-    // Get total count
+    const users = result.rows.map(user => {
+      const { password_hash, ...otherFields } = user;
+      return otherFields;
+    });
+
     const countResult = await query(
-      `SELECT COUNT(*) as total FROM users u ${whereClause}`,
+      `SELECT COUNT(*) as total FROM users u WHERE u.is_admin = false ${whereClause}`,
       queryParams
     );
 
     res.json({
-      users: result.rows,
+      users,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -120,6 +128,24 @@ router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('Get users error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/users/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await query('SELECT * FROM users WHERE id = ?', [id]);
+    const user = result.rows[0];
+    const ordersResult = await query('SELECT * FROM orders WHERE user_id = ?', [id]);
+    const orders = ordersResult.rows;
+    const orderItemsResult = await query('SELECT oi.*, p.name as part_name, m.name as merchandise_name FROM order_items oi LEFT JOIN parts p ON oi.product_type = "part" AND oi.product_id = p.id LEFT JOIN merchandise m ON oi.product_type = "merch" AND oi.product_id = m.id WHERE oi.order_id IN (SELECT id FROM orders WHERE user_id = ?)', [id]);
+    const orderItems = orderItemsResult.rows;
+    const paymentsResult = await query('SELECT * FROM payments WHERE order_id IN (SELECT id FROM orders WHERE user_id = ?)', [id]);
+    const payments = paymentsResult.rows;
+    res.json({ user, orders, orderItems, payments });
+  } catch (error) {
+    console.error('Get user error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -178,19 +204,19 @@ router.get('/orders', authenticateToken, requireAdmin, async (req, res) => {
     let paramCount = 1;
 
     if (status) {
-      whereConditions.push(`o.status = $${paramCount}`);
+      whereConditions.push(`o.status = ?`);
       queryParams.push(status);
       paramCount++;
     }
 
     if (payment_status) {
-      whereConditions.push(`o.payment_status = $${paramCount}`);
+      whereConditions.push(`o.payment_status = ?`);
       queryParams.push(payment_status);
       paramCount++;
     }
 
     if (user_id) {
-      whereConditions.push(`o.user_id = $${paramCount}`);
+      whereConditions.push(`o.user_id = ?`);
       queryParams.push(user_id);
       paramCount++;
     }
@@ -232,8 +258,20 @@ router.get('/orders', authenticateToken, requireAdmin, async (req, res) => {
 router.get('/orders/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await query('SELECT * FROM orders WHERE id = ?', [id]);
-    res.json(result.rows[0]);
+    const orderResult = await query('SELECT * FROM orders WHERE id = ?', [id]);
+    const order = orderResult.rows[0];
+    
+    const orderItemsResult = await query('SELECT oi.*, p.name as part_name, m.name as merchandise_name FROM order_items oi LEFT JOIN parts p ON oi.product_type = "part" AND oi.product_id = p.id LEFT JOIN merchandise m ON oi.product_type = "merch" AND oi.product_id = m.id WHERE oi.order_id = ?', [id]);
+    const orderItems = orderItemsResult.rows;
+    
+    
+    const paymentsResult = await query('SELECT * FROM payments WHERE order_id = ?', [id]);
+    const payments = paymentsResult.rows;
+    
+    const shippingAddressResult = await query('SELECT * FROM addresses WHERE id = ?', [order.shipping_address_id]);
+    const shippingAddress = shippingAddressResult.rows[0];
+    
+    res.json({ order, orderItems, payments, shippingAddress });
   } catch (error) {
     console.error('Get order error:', error);
     res.status(500).json({ error: 'Internal server error' });
