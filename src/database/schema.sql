@@ -39,6 +39,7 @@ CREATE TABLE brands (
     name VARCHAR(255) NOT NULL UNIQUE,
     logo_url VARCHAR(500),
     description TEXT,
+    api_make_id INT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
@@ -50,9 +51,26 @@ CREATE TABLE categories (
     parent_id CHAR(36) NULL,
     description TEXT,
     image_url VARCHAR(500),
+    api_category_id INT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (parent_id) REFERENCES categories(id) ON DELETE SET NULL
+);
+
+-- Motorcycle Models table
+CREATE TABLE models (
+    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    brand_id CHAR(36) NOT NULL,
+    category_id CHAR(36) NULL,
+    name VARCHAR(255) NOT NULL,
+    api_model_id INT,
+    api_make_id INT,
+    year INT NULL,
+    specifications JSON,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (brand_id) REFERENCES brands(id) ON DELETE CASCADE,
+    FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
 );
 
 -- Parts table
@@ -216,6 +234,10 @@ CREATE INDEX idx_parts_brand_id ON parts(brand_id);
 CREATE INDEX idx_parts_category_id ON parts(category_id);
 CREATE INDEX idx_parts_active ON parts(is_active);
 CREATE INDEX idx_merchandise_active ON merchandise(is_active);
+CREATE INDEX idx_models_brand_id ON models(brand_id);
+CREATE INDEX idx_models_category_id ON models(category_id);
+CREATE INDEX idx_brands_api_make_id ON brands(api_make_id);
+CREATE INDEX idx_categories_api_category_id ON categories(api_category_id);
 CREATE INDEX idx_orders_user_id ON orders(user_id);
 CREATE INDEX idx_orders_status ON orders(status);
 CREATE INDEX idx_order_items_order_id ON order_items(order_id);

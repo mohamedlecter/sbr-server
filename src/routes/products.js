@@ -13,10 +13,14 @@ router.get('/categories', async (req, res) => {
     let queryText = `
       SELECT c.*, 
              parent.name as parent_name,
-             COUNT(child.id) as children_count
+             COUNT(DISTINCT child.id) as children_count,
+             COUNT(DISTINCT p.id) as parts_count,
+             COUNT(DISTINCT m.id) as models_count
       FROM categories c
       LEFT JOIN categories parent ON c.parent_id = parent.id
       LEFT JOIN categories child ON child.parent_id = c.id
+      LEFT JOIN parts p ON c.id = p.category_id AND p.is_active = true
+      LEFT JOIN models m ON c.id = m.category_id
       GROUP BY c.id, parent.name
       ORDER BY (c.parent_id IS NOT NULL), c.name
     `;
@@ -99,29 +103,20 @@ router.get('/categories/:id', async (req, res) => {
 // Get all brands
 router.get('/brands', async (req, res) => {
   try {
-    const { page = 1, limit = 50 } = req.query;
-    const { offset, limit: queryLimit } = paginate(page, limit);
 
     const result = await query(
-      `SELECT b.*, COUNT(p.id) as parts_count
+      `SELECT b.*, 
+              COUNT(DISTINCT p.id) as parts_count,
+              COUNT(DISTINCT m.id) as models_count
        FROM brands b
        LEFT JOIN parts p ON b.id = p.brand_id AND p.is_active = true
+       LEFT JOIN models m ON b.id = m.brand_id
        GROUP BY b.id
-       ORDER BY b.name
-       LIMIT ${queryLimit} OFFSET ${offset}`,
+       ORDER BY b.name`,
     );
-
-    // Get total count
-    const countResult = await query('SELECT COUNT(*) FROM brands');
 
     res.json({
       brands: result.rows,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total: parseInt(countResult.rows[0].count),
-        pages: Math.ceil(countResult.rows[0].count / limit)
-      }
     });
   } catch (error) {
     console.error('Get brands error:', error);
@@ -136,9 +131,16 @@ router.get('/brands/:id', async (req, res) => {
     const { page = 1, limit = 20, sort = 'name', order = 'asc' } = req.query;
     const { offset, limit: queryLimit } = paginate(page, limit);
 
-    // Get brand details
+    // Get brand details with counts
     const brandResult = await query(
-      `SELECT * FROM brands WHERE id = ?`,
+      `SELECT b.*, 
+              COUNT(DISTINCT p.id) as parts_count,
+              COUNT(DISTINCT m.id) as models_count
+       FROM brands b
+       LEFT JOIN parts p ON b.id = p.brand_id AND p.is_active = true
+       LEFT JOIN models m ON b.id = m.brand_id
+       WHERE b.id = ?
+       GROUP BY b.id`,
       [brandId]
     );
 
@@ -480,6 +482,536 @@ router.get('/merchandise/:id', optionalAuth, async (req, res) => {
     });
   } catch (error) {
     console.error('Get merchandise error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get all models
+router.get('/models', async (req, res) => {
+  try {
+    const { 
+      page = 1, 
+      limit = 20, 
+      search, 
+      brand_id, 
+      category_id,
+      year,
+      sort = 'name', 
+      order = 'asc' 
+    } = req.query;
+
+    const { offset, limit: queryLimit } = paginate(page, limit);
+    
+    let whereConditions = [];
+    let queryParams = [];
+
+    // Build WHERE clause dynamically
+    if (search) {
+      whereConditions.push(`(LOWER(m.name) LIKE ? OR LOWER(b.name) LIKE ?)`);
+      queryParams.push(`%${sanitizeString(search).toLowerCase()}%`);
+      queryParams.push(`%${sanitizeString(search).toLowerCase()}%`);
+    }
+
+    if (brand_id) {
+      whereConditions.push(`m.brand_id = ?`);
+      queryParams.push(brand_id);
+    }
+
+    if (category_id) {
+      whereConditions.push(`m.category_id = ?`);
+      queryParams.push(category_id);
+    }
+
+    if (year) {
+      whereConditions.push(`m.year = ?`);
+      queryParams.push(parseInt(year));
+    }
+
+    const validSortFields = ['name', 'year', 'created_at'];
+    const sortField = validSortFields.includes(sort) ? sort : 'name';
+    const sortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+
+    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+
+    // Get models with pagination
+    const modelsQuery = `
+      SELECT m.*, 
+             b.name as brand_name, 
+             b.logo_url as brand_logo,
+             c.name as category_name
+      FROM models m
+      LEFT JOIN brands b ON m.brand_id = b.id
+      LEFT JOIN categories c ON m.category_id = c.id
+      ${whereClause}
+      ORDER BY m.${sortField} ${sortOrder}
+      LIMIT ${queryLimit} OFFSET ${offset}
+    `;
+
+    const result = await query(modelsQuery);
+
+    // Get total count
+    const countQuery = `
+      SELECT COUNT(*) as count
+      FROM models m
+      LEFT JOIN brands b ON m.brand_id = b.id
+      LEFT JOIN categories c ON m.category_id = c.id
+      ${whereClause}
+    `;
+    const countResult = await query(countQuery, queryParams);
+
+    res.json({
+      models: result.rows,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: parseInt(countResult.rows[0].count),
+        pages: Math.ceil(countResult.rows[0].count / limit)
+      },
+      filters: {
+        search,
+        brand_id,
+        category_id,
+        year,
+        sort,
+        order
+      }
+    });
+  } catch (error) {
+    console.error('Get models error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get single model details
+router.get('/models/:id', async (req, res) => {
+  try {
+    const modelId = req.params.id;
+
+    const result = await query(
+      `SELECT m.*, 
+              b.name as brand_name, 
+              b.logo_url as brand_logo,
+              b.api_make_id as brand_api_id,
+              c.name as category_name,
+              c.api_category_id as category_api_id
+       FROM models m
+       LEFT JOIN brands b ON m.brand_id = b.id
+       LEFT JOIN categories c ON m.category_id = c.id
+       WHERE m.id = ?`,
+      [modelId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Model not found' });
+    }
+
+    const model = result.rows[0];
+
+    // Parse specifications JSON if it exists
+    if (model.specifications && typeof model.specifications === 'string') {
+      try {
+        model.specifications = JSON.parse(model.specifications);
+      } catch (e) {
+        // If parsing fails, keep as is
+      }
+    }
+
+    // Get related models (same brand or category)
+    const relatedResult = await query(
+      `SELECT m.*, b.name as brand_name, b.logo_url as brand_logo, c.name as category_name
+       FROM models m
+       LEFT JOIN brands b ON m.brand_id = b.id
+       LEFT JOIN categories c ON m.category_id = c.id
+       WHERE m.id != ? 
+         AND (m.brand_id = ? OR m.category_id = ?)
+       ORDER BY RAND()
+       LIMIT 6`,
+      [modelId, model.brand_id, model.category_id]
+    );
+
+    res.json({
+      model,
+      related_models: relatedResult.rows
+    });
+  } catch (error) {
+    console.error('Get model error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get models by brand
+router.get('/brands/:id/models', async (req, res) => {
+  try {
+    const brandId = req.params.id;
+    const { page = 1, limit = 20, sort = 'name', order = 'asc', year } = req.query;
+    const { offset, limit: queryLimit } = paginate(page, limit);
+
+    // Verify brand exists
+    const brandResult = await query('SELECT * FROM brands WHERE id = ?', [brandId]);
+    if (brandResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Brand not found' });
+    }
+
+    let whereConditions = ['m.brand_id = ?'];
+    let queryParams = [brandId];
+
+    if (year) {
+      whereConditions.push('m.year = ?');
+      queryParams.push(parseInt(year));
+    }
+
+    const validSortFields = ['name', 'year', 'created_at'];
+    const sortField = validSortFields.includes(sort) ? sort : 'name';
+    const sortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+
+    const modelsResult = await query(
+      `SELECT m.*, c.name as category_name
+       FROM models m
+       LEFT JOIN categories c ON m.category_id = c.id
+       WHERE ${whereConditions.join(' AND ')}
+       ORDER BY m.${sortField} ${sortOrder}
+       LIMIT ${queryLimit} OFFSET ${offset}`,
+      queryParams
+    );
+
+    const countResult = await query(
+      `SELECT COUNT(*) as count FROM models WHERE ${whereConditions.join(' AND ')}`,
+      queryParams
+    );
+
+    res.json({
+      brand: brandResult.rows[0],
+      models: modelsResult.rows,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: parseInt(countResult.rows[0].count),
+        pages: Math.ceil(countResult.rows[0].count / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Get brand models error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get models by category
+router.get('/categories/:id/models', async (req, res) => {
+  try {
+    const categoryId = req.params.id;
+    const { page = 1, limit = 20, sort = 'name', order = 'asc', brand_id, year } = req.query;
+    const { offset, limit: queryLimit } = paginate(page, limit);
+
+    // Verify category exists
+    const categoryResult = await query('SELECT * FROM categories WHERE id = ?', [categoryId]);
+    if (categoryResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Category not found' });
+    }
+
+    let whereConditions = ['m.category_id = ?'];
+    let queryParams = [categoryId];
+
+    if (brand_id) {
+      whereConditions.push('m.brand_id = ?');
+      queryParams.push(brand_id);
+    }
+
+    if (year) {
+      whereConditions.push('m.year = ?');
+      queryParams.push(parseInt(year));
+    }
+
+    const validSortFields = ['name', 'year', 'created_at'];
+    const sortField = validSortFields.includes(sort) ? sort : 'name';
+    const sortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+
+    const modelsResult = await query(
+      `SELECT m.*, b.name as brand_name, b.logo_url as brand_logo
+       FROM models m
+       LEFT JOIN brands b ON m.brand_id = b.id
+       WHERE ${whereConditions.join(' AND ')}
+       ORDER BY m.${sortField} ${sortOrder}
+       LIMIT ${queryLimit} OFFSET ${offset}`,
+      queryParams
+    );
+
+    const countResult = await query(
+      `SELECT COUNT(*) as count FROM models WHERE ${whereConditions.join(' AND ')}`,
+      queryParams
+    );
+
+    res.json({
+      category: categoryResult.rows[0],
+      models: modelsResult.rows,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: parseInt(countResult.rows[0].count),
+        pages: Math.ceil(countResult.rows[0].count / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Get category models error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ===== API ID-based endpoints (matching external API structure) =====
+
+// Get models by API Make ID
+router.get('/models/make-id/:makeId', async (req, res) => {
+  try {
+    const makeId = parseInt(req.params.makeId);
+    const { page = 1, limit = 20, sort = 'name', order = 'asc' } = req.query;
+    const { offset, limit: queryLimit } = paginate(page, limit);
+
+    // Verify brand exists with this API make ID
+    const brandResult = await query(
+      'SELECT * FROM brands WHERE api_make_id = ?',
+      [makeId]
+    );
+
+    if (brandResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Make not found' });
+    }
+
+    const brand = brandResult.rows[0];
+
+    const validSortFields = ['name', 'year', 'created_at'];
+    const sortField = validSortFields.includes(sort) ? sort : 'name';
+    const sortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+
+    const modelsResult = await query(
+      `SELECT m.*, c.name as category_name
+       FROM models m
+       LEFT JOIN categories c ON m.category_id = c.id
+       WHERE m.api_make_id = ?
+       ORDER BY m.${sortField} ${sortOrder}
+       LIMIT ? OFFSET ?`,
+      [makeId, queryLimit, offset]
+    );
+
+    const countResult = await query(
+      'SELECT COUNT(*) as count FROM models WHERE api_make_id = ?',
+      [makeId]
+    );
+
+    res.json({
+      make: {
+        id: brand.id,
+        name: brand.name,
+        api_make_id: brand.api_make_id,
+        logo_url: brand.logo_url,
+        description: brand.description
+      },
+      models: modelsResult.rows,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: parseInt(countResult.rows[0].count),
+        pages: Math.ceil(countResult.rows[0].count / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Get models by make ID error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get models by API Make ID and Category (by category name)
+router.get('/models/make-id/:makeId/category/:categoryName', async (req, res) => {
+  try {
+    const makeId = parseInt(req.params.makeId);
+    const categoryName = decodeURIComponent(req.params.categoryName);
+    const { page = 1, limit = 20, sort = 'name', order = 'asc' } = req.query;
+    const { offset, limit: queryLimit } = paginate(page, limit);
+
+    // Verify brand exists
+    const brandResult = await query(
+      'SELECT * FROM brands WHERE api_make_id = ?',
+      [makeId]
+    );
+
+    if (brandResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Make not found' });
+    }
+
+    // Verify category exists
+    const categoryResult = await query(
+      'SELECT * FROM categories WHERE name = ?',
+      [categoryName]
+    );
+
+    if (categoryResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Category not found' });
+    }
+
+    const brand = brandResult.rows[0];
+    const category = categoryResult.rows[0];
+
+    const validSortFields = ['name', 'year', 'created_at'];
+    const sortField = validSortFields.includes(sort) ? sort : 'name';
+    const sortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+
+    const modelsResult = await query(
+      `SELECT m.*
+       FROM models m
+       WHERE m.api_make_id = ? AND m.category_id = ?
+       ORDER BY m.${sortField} ${sortOrder}
+       LIMIT ? OFFSET ?`,
+      [makeId, category.id, queryLimit, offset]
+    );
+
+    const countResult = await query(
+      'SELECT COUNT(*) as count FROM models WHERE api_make_id = ? AND category_id = ?',
+      [makeId, category.id]
+    );
+
+    res.json({
+      make: {
+        id: brand.id,
+        name: brand.name,
+        api_make_id: brand.api_make_id
+      },
+      category: {
+        id: category.id,
+        name: category.name,
+        api_category_id: category.api_category_id
+      },
+      models: modelsResult.rows,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: parseInt(countResult.rows[0].count),
+        pages: Math.ceil(countResult.rows[0].count / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Get models by make ID and category error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get models by API Make ID and Year
+router.get('/models/make-id/:makeId/:year', async (req, res) => {
+  try {
+    const makeId = parseInt(req.params.makeId);
+    const year = parseInt(req.params.year);
+    const { page = 1, limit = 20, sort = 'name', order = 'asc' } = req.query;
+    const { offset, limit: queryLimit } = paginate(page, limit);
+
+    // Verify brand exists
+    const brandResult = await query(
+      'SELECT * FROM brands WHERE api_make_id = ?',
+      [makeId]
+    );
+
+    if (brandResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Make not found' });
+    }
+
+    const brand = brandResult.rows[0];
+
+    const validSortFields = ['name', 'year', 'created_at'];
+    const sortField = validSortFields.includes(sort) ? sort : 'name';
+    const sortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+
+    const modelsResult = await query(
+      `SELECT m.*, c.name as category_name
+       FROM models m
+       LEFT JOIN categories c ON m.category_id = c.id
+       WHERE m.api_make_id = ? AND m.year = ?
+       ORDER BY m.${sortField} ${sortOrder}
+       LIMIT ? OFFSET ?`,
+      [makeId, year, queryLimit, offset]
+    );
+
+    const countResult = await query(
+      'SELECT COUNT(*) as count FROM models WHERE api_make_id = ? AND year = ?',
+      [makeId, year]
+    );
+
+    res.json({
+      make: {
+        id: brand.id,
+        name: brand.name,
+        api_make_id: brand.api_make_id
+      },
+      year: year,
+      models: modelsResult.rows,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: parseInt(countResult.rows[0].count),
+        pages: Math.ceil(countResult.rows[0].count / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Get models by make ID and year error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get models by API Make Name (alternative endpoint)
+router.get('/models/make-name/:makeName', async (req, res) => {
+  try {
+    const makeName = decodeURIComponent(req.params.makeName);
+    const { page = 1, limit = 20, sort = 'name', order = 'asc' } = req.query;
+    const { offset, limit: queryLimit } = paginate(page, limit);
+
+    // Find brand by name
+    const brandResult = await query(
+      'SELECT * FROM brands WHERE name = ?',
+      [makeName]
+    );
+
+    if (brandResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Make not found' });
+    }
+
+    const brand = brandResult.rows[0];
+
+    if (!brand.api_make_id) {
+      return res.status(404).json({ error: 'Make API ID not found' });
+    }
+
+    const validSortFields = ['name', 'year', 'created_at'];
+    const sortField = validSortFields.includes(sort) ? sort : 'name';
+    const sortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+
+    const modelsResult = await query(
+      `SELECT m.*, c.name as category_name
+       FROM models m
+       LEFT JOIN categories c ON m.category_id = c.id
+       WHERE m.api_make_id = ?
+       ORDER BY m.${sortField} ${sortOrder}
+       LIMIT ? OFFSET ?`,
+      [brand.api_make_id, queryLimit, offset]
+    );
+
+    const countResult = await query(
+      'SELECT COUNT(*) as count FROM models WHERE api_make_id = ?',
+      [brand.api_make_id]
+    );
+
+    res.json({
+      make: {
+        id: brand.id,
+        name: brand.name,
+        api_make_id: brand.api_make_id,
+        logo_url: brand.logo_url,
+        description: brand.description
+      },
+      models: modelsResult.rows,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: parseInt(countResult.rows[0].count),
+        pages: Math.ceil(countResult.rows[0].count / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Get models by make name error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
