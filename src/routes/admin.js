@@ -18,7 +18,25 @@ router.get('/dashboard', authenticateToken, requireAdmin, async (req, res) => {
       totalProducts,
       recentOrders,
       topProducts,
-      membershipStats
+      membershipStats,
+      // Revenue trends - Daily (last 30 days)
+      dailyRevenue,
+      // Revenue trends - Weekly (last 12 weeks)
+      weeklyRevenue,
+      // Revenue trends - Monthly (last 12 months)
+      monthlyRevenue,
+      // Order status distribution
+      orderStatusDist,
+      // Payment status breakdown
+      paymentStatusDist,
+      // Growth metrics - current period
+      currentPeriodUsers,
+      currentPeriodOrders,
+      currentPeriodRevenue,
+      // Growth metrics - previous period
+      previousPeriodUsers,
+      previousPeriodOrders,
+      previousPeriodRevenue
     ] = await Promise.all([
       query('SELECT COUNT(*) as count FROM users'),
       query('SELECT COUNT(*) as count FROM orders'),
@@ -45,8 +63,181 @@ router.get('/dashboard', authenticateToken, requireAdmin, async (req, res) => {
         FROM users
         GROUP BY membership_type
         ORDER BY count DESC
+      `),
+      // Daily revenue trends (last 30 days)
+      query(`
+        SELECT 
+          DATE(o.created_at) as date,
+          COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_amount ELSE 0 END), 0) as revenue,
+          COUNT(o.id) as orders
+        FROM orders o
+        WHERE o.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        GROUP BY DATE(o.created_at)
+        ORDER BY date ASC
+      `),
+      // Weekly revenue trends (last 12 weeks)
+      query(`
+        SELECT 
+          YEAR(o.created_at) as year,
+          WEEK(o.created_at) as week,
+          COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_amount ELSE 0 END), 0) as revenue,
+          COUNT(o.id) as orders
+        FROM orders o
+        WHERE o.created_at >= DATE_SUB(CURDATE(), INTERVAL 12 WEEK)
+        GROUP BY YEAR(o.created_at), WEEK(o.created_at)
+        ORDER BY year ASC, week ASC
+      `),
+      // Monthly revenue trends (last 12 months)
+      query(`
+        SELECT 
+          DATE_FORMAT(o.created_at, '%Y-%m') as month,
+          COALESCE(SUM(CASE WHEN o.payment_status = 'paid' THEN o.total_amount ELSE 0 END), 0) as revenue,
+          COUNT(o.id) as orders
+        FROM orders o
+        WHERE o.created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+        GROUP BY DATE_FORMAT(o.created_at, '%Y-%m')
+        ORDER BY month ASC
+      `),
+      // Order status distribution
+      query(`
+        SELECT 
+          o.status,
+          COUNT(*) as count,
+          ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM orders), 2) as percentage
+        FROM orders o
+        GROUP BY o.status
+        ORDER BY count DESC
+      `),
+      // Payment status breakdown
+      query(`
+        SELECT 
+          o.payment_status as status,
+          COUNT(*) as count,
+          COALESCE(SUM(o.total_amount), 0) as amount
+        FROM orders o
+        GROUP BY o.payment_status
+        ORDER BY count DESC
+      `),
+      // Current period metrics (this month)
+      query(`
+        SELECT COUNT(*) as count FROM users 
+        WHERE created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+      `),
+      query(`
+        SELECT 
+          COUNT(*) as count
+        FROM orders 
+        WHERE created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+      `),
+      query(`
+        SELECT COALESCE(SUM(CASE WHEN payment_status = 'paid' THEN total_amount ELSE 0 END), 0) as revenue
+        FROM orders 
+        WHERE created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+      `),
+      // Previous period metrics (last month)
+      query(`
+        SELECT COUNT(*) as count FROM users 
+        WHERE created_at >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')
+        AND created_at < DATE_FORMAT(CURDATE(), '%Y-%m-01')
+      `),
+      query(`
+        SELECT 
+          COUNT(*) as count
+        FROM orders 
+        WHERE created_at >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')
+        AND created_at < DATE_FORMAT(CURDATE(), '%Y-%m-01')
+      `),
+      query(`
+        SELECT COALESCE(SUM(CASE WHEN payment_status = 'paid' THEN total_amount ELSE 0 END), 0) as revenue
+        FROM orders 
+        WHERE created_at >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')
+        AND created_at < DATE_FORMAT(CURDATE(), '%Y-%m-01')
       `)
     ]);
+
+    // Format daily revenue trends
+    const dailyTrends = dailyRevenue.rows.map(row => {
+      let dateStr = row.date;
+      if (dateStr instanceof Date) {
+        dateStr = dateStr.toISOString().split('T')[0];
+      } else if (typeof dateStr === 'string') {
+        dateStr = dateStr.split('T')[0];
+      }
+      return {
+        date: dateStr,
+        revenue: parseFloat(row.revenue),
+        orders: parseInt(row.orders)
+      };
+    });
+
+    // Format weekly revenue trends
+    const weeklyTrends = weeklyRevenue.rows.map(row => ({
+      week: `Week ${row.week}`,
+      revenue: parseFloat(row.revenue),
+      orders: parseInt(row.orders)
+    }));
+
+    // Format monthly revenue trends
+    const monthlyTrends = monthlyRevenue.rows.map(row => ({
+      month: row.month,
+      revenue: parseFloat(row.revenue),
+      orders: parseInt(row.orders)
+    }));
+
+    // Format order status distribution
+    const orderStatusDistribution = orderStatusDist.rows.map(row => ({
+      status: row.status,
+      count: parseInt(row.count),
+      percentage: parseFloat(row.percentage)
+    }));
+
+    // Format payment status breakdown
+    const paymentStatusDistribution = paymentStatusDist.rows.map(row => ({
+      status: row.status,
+      count: parseInt(row.count),
+      amount: parseFloat(row.amount)
+    }));
+
+    // Calculate growth metrics
+    const currentUsers = parseInt(currentPeriodUsers.rows[0].count);
+    const previousUsers = parseInt(previousPeriodUsers.rows[0].count);
+    const currentOrders = parseInt(currentPeriodOrders.rows[0].count);
+    const previousOrders = parseInt(previousPeriodOrders.rows[0].count);
+    const currentRev = parseFloat(currentPeriodRevenue.rows[0].revenue);
+    const previousRev = parseFloat(previousPeriodRevenue.rows[0].revenue);
+
+    const calculateChangePercent = (current, previous) => {
+      if (previous === 0) return current > 0 ? 100 : 0;
+      return ((current - previous) / previous) * 100;
+    };
+
+    const getTrend = (current, previous) => {
+      if (current > previous) return 'up';
+      if (current < previous) return 'down';
+      return 'neutral';
+    };
+
+    const growthMetrics = {
+      users: {
+        current: currentUsers,
+        previous: previousUsers,
+        change_percent: calculateChangePercent(currentUsers, previousUsers),
+        trend: getTrend(currentUsers, previousUsers)
+      },
+      orders: {
+        current: currentOrders,
+        previous: previousOrders,
+        change_percent: calculateChangePercent(currentOrders, previousOrders),
+        trend: getTrend(currentOrders, previousOrders)
+      },
+      revenue: {
+        current: currentRev,
+        previous: previousRev,
+        change_percent: calculateChangePercent(currentRev, previousRev),
+        trend: getTrend(currentRev, previousRev)
+      },
+      period: 'this_month_vs_last_month'
+    };
 
     res.json({
       statistics: {
@@ -57,7 +248,15 @@ router.get('/dashboard', authenticateToken, requireAdmin, async (req, res) => {
       },
       recent_orders: recentOrders.rows,
       top_products: topProducts.rows,
-      membership_distribution: membershipStats.rows
+      membership_distribution: membershipStats.rows,
+      revenue_trends: {
+        daily: dailyTrends,
+        weekly: weeklyTrends,
+        monthly: monthlyTrends
+      },
+      order_status_distribution: orderStatusDistribution,
+      payment_status_distribution: paymentStatusDistribution,
+      growth_metrics: growthMetrics
     });
   } catch (error) {
     console.error('Get dashboard error:', error);
@@ -475,7 +674,6 @@ router.post('/parts', authenticateToken, requireAdmin, [
   body('original_price').isFloat({ min: 0 }).withMessage('Original price must be positive'),
   body('selling_price').isFloat({ min: 0 }).withMessage('Selling price must be positive'),
   body('quantity').isInt({ min: 0 }).withMessage('Quantity must be non-negative'),
-  body('sku').optional().isString().withMessage('SKU must be a string'),
   body('weight').optional().isFloat({ min: 0 }).withMessage('Weight must be positive'),
   body('images').optional().isArray().withMessage('Images must be an array'),
   body('color_options').optional().isArray().withMessage('Color options must be an array'),
@@ -489,7 +687,7 @@ router.post('/parts', authenticateToken, requireAdmin, [
 
     const {
       brand_id, category_id, name, description, original_price, selling_price,
-      quantity, sku, weight, images = [], color_options = [], compatibility = []
+      quantity, weight, images = [], color_options = [], compatibility = []
     } = req.body;
 
     const id = uuidv4();
@@ -510,11 +708,11 @@ router.post('/parts', authenticateToken, requireAdmin, [
 
      await query(
       `INSERT INTO parts (id, brand_id, category_id, name, description, original_price, selling_price, 
-                         quantity, sku, weight, images, color_options, compatibility)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         quantity, weight, images, color_options, compatibility)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        `,
       [id, brand_id, category_id, sanitizeString(name), description, original_price, selling_price,
-       quantity, sku, weight, JSON.stringify(images), JSON.stringify(color_options), JSON.stringify(compatibility)]
+       quantity, weight, JSON.stringify(images), JSON.stringify(color_options), JSON.stringify(compatibility)]
     );
 
     const partResult = await query('SELECT * FROM parts WHERE id = ?', [id]);
@@ -534,7 +732,6 @@ router.post('/merchandise', authenticateToken, requireAdmin, [
   body('description').optional().isString().withMessage('Description must be a string'),
   body('price').isFloat({ min: 0 }).withMessage('Price must be positive'),
   body('quantity').isInt({ min: 0 }).withMessage('Quantity must be non-negative'),
-  body('sku').optional().isString().withMessage('SKU must be a string'),
   body('weight').optional().isFloat({ min: 0 }).withMessage('Weight must be positive'),
   body('images').optional().isArray().withMessage('Images must be an array'),
   body('size_options').optional().isArray().withMessage('Size options must be an array'),
@@ -547,15 +744,15 @@ router.post('/merchandise', authenticateToken, requireAdmin, [
     }
 
     const {
-      name, description, price, quantity, sku, weight,
+      name, description, price, quantity, weight,
       images = [], size_options = [], color_options = []
     } = req.body;
 
     const result = await query(
-      `INSERT INTO merchandise (name, description, price, quantity, sku, weight, images, size_options, color_options)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO merchandise (name, description, price, quantity, weight, images, size_options, color_options)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING *`,
-      [sanitizeString(name), description, price, quantity, sku, weight,
+      [sanitizeString(name), description, price, quantity, weight,
        JSON.stringify(images), JSON.stringify(size_options), JSON.stringify(color_options)]
     );
 
@@ -594,7 +791,7 @@ router.get('/merchandise/:id', authenticateToken, requireAdmin, async (req, res)
 router.put('/parts/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const fields = ['name','description','original_price','selling_price','quantity','sku','weight','images','color_options','compatibility'];
+    const fields = ['name','description','original_price','selling_price','quantity','weight','images','color_options','compatibility'];
     const updates = [];
     const params = [];
 
@@ -629,7 +826,7 @@ router.put('/parts/:id', authenticateToken, requireAdmin, async (req, res) => {
 router.put('/merchandise/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const fields = ['name','description','price','quantity','sku','weight','images','size_options','color_options'];
+    const fields = ['name','description','price','quantity','weight','images','size_options','color_options'];
     const updates = [];
     const params = [];
 
