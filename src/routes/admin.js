@@ -3,6 +3,7 @@ const { body, validationResult } = require('express-validator');
 const { query, transaction } = require('../database/connection');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { paginate, sanitizeString } = require('../utils/helpers');
+const { uploadSingle, uploadMultiple, getFileUrl, processFiles } = require('../middleware/upload');
 const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
@@ -666,7 +667,7 @@ SELECT COUNT(*) AS count FROM merchandise m ${merchWhereClause}
   }
 });
 // Create new part
-router.post('/parts', authenticateToken, requireAdmin, [
+router.post('/parts', authenticateToken, requireAdmin, uploadMultiple('images', 10), [
   body('brand_id').isUUID().withMessage('Valid brand ID is required'),
   body('category_id').isUUID().withMessage('Valid category ID is required'),
   body('name').trim().notEmpty().withMessage('Part name is required'),
@@ -675,9 +676,8 @@ router.post('/parts', authenticateToken, requireAdmin, [
   body('selling_price').isFloat({ min: 0 }).withMessage('Selling price must be positive'),
   body('quantity').isInt({ min: 0 }).withMessage('Quantity must be non-negative'),
   body('weight').optional().isFloat({ min: 0 }).withMessage('Weight must be positive'),
-  body('images').optional().isArray().withMessage('Images must be an array'),
-  body('color_options').optional().isArray().withMessage('Color options must be an array'),
-  body('compatibility').optional().isArray().withMessage('Compatibility must be an array')
+  body('color_options').isString().withMessage('Color options must be a string'),
+  body('compatibility').isString().withMessage('Compatibility must be a string')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -687,8 +687,22 @@ router.post('/parts', authenticateToken, requireAdmin, [
 
     const {
       brand_id, category_id, name, description, original_price, selling_price,
-      quantity, weight, images = [], color_options = [], compatibility = []
+      quantity, weight, color_options, compatibility
     } = req.body;
+
+    // Process uploaded images
+    const uploadedImages = processFiles(req.files);
+    // Also check for images in body (for backward compatibility with URLs)
+    let images = [];
+    if (req.body.images) {
+      try {
+        images = typeof req.body.images === 'string' ? JSON.parse(req.body.images) : req.body.images;
+      } catch (e) {
+        images = Array.isArray(req.body.images) ? req.body.images : [];
+      }
+    }
+    // Combine uploaded files with URL images
+    images = [...uploadedImages, ...images.filter(img => typeof img === 'string' && (img.startsWith('http://') || img.startsWith('https://') || img.startsWith('/uploads')))];
 
     const id = uuidv4();
 
@@ -727,15 +741,14 @@ router.post('/parts', authenticateToken, requireAdmin, [
   }
 });
 // Create new merchandise
-router.post('/merchandise', authenticateToken, requireAdmin, [
+router.post('/merchandise', authenticateToken, requireAdmin, uploadMultiple('images', 10), [
   body('name').trim().notEmpty().withMessage('Merchandise name is required'),
   body('description').optional().isString().withMessage('Description must be a string'),
   body('price').isFloat({ min: 0 }).withMessage('Price must be positive'),
   body('quantity').isInt({ min: 0 }).withMessage('Quantity must be non-negative'),
   body('weight').optional().isFloat({ min: 0 }).withMessage('Weight must be positive'),
-  body('images').optional().isArray().withMessage('Images must be an array'),
-  body('size_options').optional().isArray().withMessage('Size options must be an array'),
-  body('color_options').optional().isArray().withMessage('Color options must be an array')
+  body('size_options').isString().withMessage('Size options must be a string'),
+  body('color_options').isString().withMessage('Color options must be a string')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -745,16 +758,33 @@ router.post('/merchandise', authenticateToken, requireAdmin, [
 
     const {
       name, description, price, quantity, weight,
-      images = [], size_options = [], color_options = []
+      size_options, color_options
     } = req.body;
 
-    const result = await query(
-      `INSERT INTO merchandise (name, description, price, quantity, weight, images, size_options, color_options)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       RETURNING *`,
-      [sanitizeString(name), description, price, quantity, weight,
+    // Process uploaded images
+    const uploadedImages = processFiles(req.files);
+    // Also check for images in body (for backward compatibility with URLs)
+    let images = [];
+    if (req.body.images) {
+      try {
+        images = typeof req.body.images === 'string' ? JSON.parse(req.body.images) : req.body.images;
+      } catch (e) {
+        images = Array.isArray(req.body.images) ? req.body.images : [];
+      }
+    }
+    // Combine uploaded files with URL images
+    images = [...uploadedImages, ...images.filter(img => typeof img === 'string' && (img.startsWith('http://') || img.startsWith('https://') || img.startsWith('/uploads')))];
+
+    const id = uuidv4();
+
+    await query(
+      `INSERT INTO merchandise (id, name, description, price, quantity, weight, images, size_options, color_options)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, sanitizeString(name), description, price, quantity, weight,
        JSON.stringify(images), JSON.stringify(size_options), JSON.stringify(color_options)]
     );
+
+    const result = await query('SELECT * FROM merchandise WHERE id = ?', [id]);
 
     res.status(201).json({
       message: 'Merchandise created successfully',
@@ -788,17 +818,17 @@ router.get('/merchandise/:id', authenticateToken, requireAdmin, async (req, res)
   }
 });
 
-router.put('/parts/:id', authenticateToken, requireAdmin, async (req, res) => {
+router.put('/parts/:id', authenticateToken, requireAdmin, uploadMultiple('images', 10), async (req, res) => {
   try {
     const { id } = req.params;
-    const fields = ['name','description','original_price','selling_price','quantity','weight','images','color_options','compatibility'];
+    const fields = ['name','description','original_price','selling_price','quantity','weight','color_options','compatibility'];
     const updates = [];
     const params = [];
 
     fields.forEach(field => {
       if (req.body[field] !== undefined) {
         updates.push(`${field} = ?`);
-        if (['images','color_options','compatibility'].includes(field)) {
+        if (['color_options','compatibility'].includes(field)) {
           params.push(JSON.stringify(req.body[field]));
         } else {
           params.push(req.body[field]);
@@ -806,16 +836,62 @@ router.put('/parts/:id', authenticateToken, requireAdmin, async (req, res) => {
       }
     });
 
+    // Handle image uploads
+    if (req.files && req.files.length > 0) {
+      const uploadedImages = processFiles(req.files);
+      // Get existing images if any
+      let existingImages = [];
+      if (req.body.images) {
+        try {
+          existingImages = typeof req.body.images === 'string' ? JSON.parse(req.body.images) : req.body.images;
+        } catch (e) {
+          existingImages = Array.isArray(req.body.images) ? req.body.images : [];
+        }
+      } else {
+        // Get current images from database
+        const currentPart = await query('SELECT images FROM parts WHERE id = ?', [id]);
+        if (currentPart.rows[0] && currentPart.rows[0].images) {
+          try {
+            existingImages = typeof currentPart.rows[0].images === 'string' 
+              ? JSON.parse(currentPart.rows[0].images) 
+              : currentPart.rows[0].images;
+          } catch (e) {
+            existingImages = [];
+          }
+        }
+      }
+      // Combine uploaded files with existing images (filter out URLs that are being replaced)
+      const urlImages = existingImages.filter(img => typeof img === 'string' && (img.startsWith('http://') || img.startsWith('https://') || img.startsWith('/uploads')));
+      const allImages = [...uploadedImages, ...urlImages];
+      updates.push('images = ?');
+      params.push(JSON.stringify(allImages));
+    } else if (req.body.images !== undefined) {
+      // If images are provided in body (URLs or array)
+      let images = [];
+      try {
+        images = typeof req.body.images === 'string' ? JSON.parse(req.body.images) : req.body.images;
+      } catch (e) {
+        images = Array.isArray(req.body.images) ? req.body.images : [];
+      }
+      updates.push('images = ?');
+      params.push(JSON.stringify(images));
+    }
+
     if (updates.length === 0) {
       return res.status(400).json({ error: 'No fields provided for update' });
     }
 
     params.push(id); // for WHERE clause
-    const sql = `UPDATE parts SET ${updates.join(', ')} WHERE id = ?`;
+    const sql = `UPDATE parts SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
 
     await query(sql, params);
 
-    res.json({ message: 'Part updated successfully' });
+    const partResult = await query('SELECT * FROM parts WHERE id = ?', [id]);
+
+    res.json({ 
+      message: 'Part updated successfully',
+      part: partResult.rows[0]
+    });
 
   } catch (error) {
     console.error('Update part error:', error);
@@ -823,10 +899,10 @@ router.put('/parts/:id', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-router.put('/merchandise/:id', authenticateToken, requireAdmin, async (req, res) => {
+router.put('/merchandise/:id', authenticateToken, requireAdmin, uploadMultiple('images', 10), async (req, res) => {
   try {
     const { id } = req.params;
-    const fields = ['name','description','price','quantity','weight','images','size_options','color_options'];
+    const fields = ['name','description','price','quantity','weight','size_options','color_options'];
     const updates = [];
     const params = [];
 
@@ -837,7 +913,7 @@ router.put('/merchandise/:id', authenticateToken, requireAdmin, async (req, res)
         let value = req.body[field];
 
         // If arrays, stringify
-        if (['images','size_options','color_options'].includes(field)) {
+        if (['size_options','color_options'].includes(field)) {
           value = value ? JSON.stringify(value) : null;
         }
 
@@ -846,17 +922,61 @@ router.put('/merchandise/:id', authenticateToken, requireAdmin, async (req, res)
       }
     });
 
+    // Handle image uploads
+    if (req.files && req.files.length > 0) {
+      const uploadedImages = processFiles(req.files);
+      // Get existing images if any
+      let existingImages = [];
+      if (req.body.images) {
+        try {
+          existingImages = typeof req.body.images === 'string' ? JSON.parse(req.body.images) : req.body.images;
+        } catch (e) {
+          existingImages = Array.isArray(req.body.images) ? req.body.images : [];
+        }
+      } else {
+        // Get current images from database
+        const currentMerch = await query('SELECT images FROM merchandise WHERE id = ?', [id]);
+        if (currentMerch.rows[0] && currentMerch.rows[0].images) {
+          try {
+            existingImages = typeof currentMerch.rows[0].images === 'string' 
+              ? JSON.parse(currentMerch.rows[0].images) 
+              : currentMerch.rows[0].images;
+          } catch (e) {
+            existingImages = [];
+          }
+        }
+      }
+      // Combine uploaded files with existing images (filter out URLs that are being replaced)
+      const urlImages = existingImages.filter(img => typeof img === 'string' && (img.startsWith('http://') || img.startsWith('https://') || img.startsWith('/uploads')));
+      const allImages = [...uploadedImages, ...urlImages];
+      updates.push('images = ?');
+      params.push(JSON.stringify(allImages));
+    } else if (req.body.images !== undefined) {
+      // If images are provided in body (URLs or array)
+      let images = [];
+      try {
+        images = typeof req.body.images === 'string' ? JSON.parse(req.body.images) : req.body.images;
+      } catch (e) {
+        images = Array.isArray(req.body.images) ? req.body.images : [];
+      }
+      updates.push('images = ?');
+      params.push(JSON.stringify(images));
+    }
+
     if (updates.length === 0) {
       return res.status(400).json({ error: 'No fields provided for update' });
     }
 
     params.push(id); // for WHERE clause
-    const sql = `UPDATE merchandise SET ${updates.join(', ')} WHERE id = ?`;
+    const sql = `UPDATE merchandise SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
 
     await query(sql, params);
 
+    const merchResult = await query('SELECT * FROM merchandise WHERE id = ?', [id]);
+
     res.json({
       message: 'Merchandise updated successfully',
+      merchandise: merchResult.rows[0]
     });
 
   } catch (error) {
@@ -892,9 +1012,9 @@ router.delete('/merchandise/:id', authenticateToken, requireAdmin, async (req, r
 router.post('/brands',
   authenticateToken,
   requireAdmin,
+  uploadSingle('logo'),
   body('name').trim().notEmpty().withMessage('Brand name is required'),
   body('description').optional().isString().withMessage('Description must be a string'),
-  body('logo_url').optional().isURL().withMessage('Logo URL must be a valid URL'),
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -904,13 +1024,19 @@ router.post('/brands',
 
       const { name, description, logo_url } = req.body;
 
+      // Process uploaded logo or use URL
+      let logoUrl = logo_url || null;
+      if (req.file) {
+        logoUrl = getFileUrl(req.file);
+      }
+
       // Generate a UUID manually since your table uses UUIDs
       const id = uuidv4();
 
       // Insert the new brand
       await query(
         'INSERT INTO brands (id, name, description, logo_url) VALUES (?, ?, ?, ?)',
-        [id, sanitizeString(name), description ?? null, logo_url ?? null]
+        [id, sanitizeString(name), description ?? null, logoUrl]
       );
 
       // Retrieve the newly created brand
@@ -928,10 +1054,9 @@ router.post('/brands',
 );
 
 // Update brand
-router.put('/brands/:id', authenticateToken, requireAdmin, [
+router.put('/brands/:id', authenticateToken, requireAdmin, uploadSingle('logo'), [
   body('name').optional().trim().notEmpty().withMessage('Brand name cannot be empty'),
-  body('description').optional().isString().withMessage('Description must be a string'),
-  body('logo_url').optional().isURL().withMessage('Logo URL must be a valid URL')
+  body('description').optional().isString().withMessage('Description must be a string')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -944,24 +1069,24 @@ router.put('/brands/:id', authenticateToken, requireAdmin, [
 
     const updates = [];
     const values = [];
-    let paramCount = 1;
 
     if (name !== undefined) {
-      updates.push(`name = $${paramCount}`);
+      updates.push('name = ?');
       values.push(sanitizeString(name));
-      paramCount++;
     }
 
     if (description !== undefined) {
-      updates.push(`description = $${paramCount}`);
+      updates.push('description = ?');
       values.push(description);
-      paramCount++;
     }
 
-    if (logo_url !== undefined) {
-      updates.push(`logo_url = $${paramCount}`);
+    // Process uploaded logo or use URL
+    if (req.file) {
+      updates.push('logo_url = ?');
+      values.push(getFileUrl(req.file));
+    } else if (logo_url !== undefined) {
+      updates.push('logo_url = ?');
       values.push(logo_url);
-      paramCount++;
     }
 
     if (updates.length === 0) {
@@ -971,14 +1096,16 @@ router.put('/brands/:id', authenticateToken, requireAdmin, [
     values.push(id);
     const queryText = `UPDATE brands SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
 
-    const result = await query(queryText, values);
+    await query(queryText, values);
+
+    const brandResult = await query('SELECT * FROM brands WHERE id = ?', [id]);
 
     res.json({
       message: 'Brand updated successfully',
-      brand: result
+      brand: brandResult.rows[0]
     });
   } catch (error) {
-    if (error.code === '23505') { // Unique constraint violation
+    if (error.code === 'ER_DUP_ENTRY') { // Unique constraint violation
       return res.status(400).json({ error: 'Brand with this name already exists' });
     }
     console.error('Update brand error:', error);
@@ -1021,11 +1148,10 @@ router.delete('/brands/:id', authenticateToken, requireAdmin, async (req, res) =
 });
 
 // Create new category
-router.post('/categories', authenticateToken, requireAdmin, [
+router.post('/categories', authenticateToken, requireAdmin, uploadSingle('image'), [
   body('name').trim().notEmpty().withMessage('Category name is required'),
   body('description').optional().isString().withMessage('Description must be a string'),
-  body('parent_id').optional().isUUID().withMessage('Parent ID must be a valid UUID'),
-  body('image_url').optional().isURL().withMessage('Image URL must be a valid URL')
+  body('parent_id').optional().isUUID().withMessage('Parent ID must be a valid UUID')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -1034,6 +1160,12 @@ router.post('/categories', authenticateToken, requireAdmin, [
     }
 
     const { name, description, parent_id, image_url } = req.body;
+
+    // Process uploaded image or use URL
+    let imageUrl = image_url || null;
+    if (req.file) {
+      imageUrl = getFileUrl(req.file);
+    }
 
     const id = uuidv4();
 
@@ -1051,7 +1183,7 @@ router.post('/categories', authenticateToken, requireAdmin, [
 
     await query(
       'INSERT INTO categories (id, name, description, parent_id, image_url) VALUES (?, ?, ?, ?, ?)',
-      [id, sanitizeString(name), description ?? null, parent_id ?? null, image_url ?? null]
+      [id, sanitizeString(name), description ?? null, parent_id ?? null, imageUrl]
     );
 
     const categoryResult = await query('SELECT * FROM categories WHERE id = ?', [id]);
@@ -1067,11 +1199,10 @@ router.post('/categories', authenticateToken, requireAdmin, [
 });
 
 // Update category
-router.put('/categories/:id', authenticateToken, requireAdmin, [
+router.put('/categories/:id', authenticateToken, requireAdmin, uploadSingle('image'), [
   body('name').optional().trim().notEmpty().withMessage('Category name cannot be empty'),
   body('description').optional().isString().withMessage('Description must be a string'),
-  body('parent_id').optional().isUUID().withMessage('Parent ID must be a valid UUID'),
-  body('image_url').optional().isURL().withMessage('Image URL must be a valid URL')
+  body('parent_id').optional().isUUID().withMessage('Parent ID must be a valid UUID')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -1101,30 +1232,29 @@ router.put('/categories/:id', authenticateToken, requireAdmin, [
 
     const updates = [];
     const values = [];
-    let paramCount = 1;
 
     if (name !== undefined) {
-      updates.push(`name = $${paramCount}`);
+      updates.push('name = ?');
       values.push(sanitizeString(name));
-      paramCount++;
     }
 
     if (description !== undefined) {
-      updates.push(`description = $${paramCount}`);
+      updates.push('description = ?');
       values.push(description);
-      paramCount++;
     }
 
     if (parent_id !== undefined) {
-      updates.push(`parent_id = $${paramCount}`);
+      updates.push('parent_id = ?');
       values.push(parent_id);
-      paramCount++;
     }
 
-    if (image_url !== undefined) {
-      updates.push(`image_url = $${paramCount}`);
+    // Process uploaded image or use URL
+    if (req.file) {
+      updates.push('image_url = ?');
+      values.push(getFileUrl(req.file));
+    } else if (image_url !== undefined) {
+      updates.push('image_url = ?');
       values.push(image_url);
-      paramCount++;
     }
 
     if (updates.length === 0) {
@@ -1320,6 +1450,259 @@ router.put('/ambassadors/:id/status', authenticateToken, requireAdmin, [
     });
   } catch (error) {
     console.error('Update ambassador status error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ===== Partners Management =====
+
+// Get all partners (admin - includes inactive)
+router.get('/partners', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { page = 1, limit = 20, search, is_active } = req.query;
+    const { offset, limit: queryLimit } = paginate(page, limit);
+
+    let whereConditions = [];
+    let queryParams = [];
+
+    if (search) {
+      whereConditions.push('(LOWER(p.name) LIKE ? OR LOWER(p.description) LIKE ? OR LOWER(p.contact_email) LIKE ?)');
+      const searchTerm = `%${search.toLowerCase()}%`;
+      queryParams.push(searchTerm, searchTerm, searchTerm);
+    }
+
+    if (is_active !== undefined) {
+      whereConditions.push('p.is_active = ?');
+      queryParams.push(is_active === 'true' ? 1 : 0);
+    }
+
+    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+
+    const result = await query(
+      `SELECT p.*
+       FROM partners p
+       ${whereClause}
+       ORDER BY p.created_at DESC
+       LIMIT ${queryLimit} OFFSET ${offset}`,
+      queryParams
+    );
+
+    const countResult = await query(
+      `SELECT COUNT(*) as count FROM partners p ${whereClause}`,
+      queryParams
+    );
+
+    res.json({
+      partners: result.rows,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: parseInt(countResult.rows[0].count),
+        pages: Math.ceil(countResult.rows[0].count / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Get partners (admin) error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get single partner (admin)
+router.get('/partners/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await query('SELECT * FROM partners WHERE id = ?', [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Partner not found' });
+    }
+
+    res.json({ partner: result.rows[0] });
+  } catch (error) {
+    console.error('Get partner (admin) error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create new partner
+router.post('/partners', authenticateToken, requireAdmin, uploadSingle('logo'), [
+  body('name').trim().notEmpty().withMessage('Partner name is required'),
+  body('description').optional().isString().withMessage('Description must be a string'),
+  body('about_page').optional().isString().withMessage('About page must be a string'),
+  body('website_url').optional().isURL().withMessage('Website URL must be a valid URL'),
+  body('contact_email').optional().isEmail().withMessage('Contact email must be a valid email'),
+  body('is_active').optional().isBoolean().withMessage('is_active must be a boolean')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { name, description, about_page, website_url, contact_email, is_active, logo_url } = req.body;
+
+    // Process uploaded logo or use URL
+    let logoUrl = logo_url || null;
+    if (req.file) {
+      logoUrl = getFileUrl(req.file);
+    }
+
+    const id = uuidv4();
+
+    await query(
+      `INSERT INTO partners (id, name, logo_url, description, about_page, website_url, contact_email, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        sanitizeString(name),
+        logoUrl,
+        description ?? null,
+        about_page ?? null,
+        website_url ?? null,
+        contact_email ?? null,
+        is_active !== undefined ? (is_active === true || is_active === 'true') : true
+      ]
+    );
+
+    const partnerResult = await query('SELECT * FROM partners WHERE id = ?', [id]);
+
+    res.status(201).json({
+      message: 'Partner created successfully',
+      partner: partnerResult.rows[0]
+    });
+  } catch (error) {
+    console.error('Create partner error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update partner
+router.put('/partners/:id', authenticateToken, requireAdmin, uploadSingle('logo'), [
+  body('name').optional().trim().notEmpty().withMessage('Partner name cannot be empty'),
+  body('description').optional().isString().withMessage('Description must be a string'),
+  body('about_page').optional().isString().withMessage('About page must be a string'),
+  body('website_url').optional().isURL().withMessage('Website URL must be a valid URL'),
+  body('contact_email').optional().isEmail().withMessage('Contact email must be a valid email'),
+  body('is_active').optional().isBoolean().withMessage('is_active must be a boolean')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { id } = req.params;
+    const { name, description, about_page, website_url, contact_email, is_active, logo_url } = req.body;
+
+    const updates = [];
+    const values = [];
+
+    if (name !== undefined) {
+      updates.push('name = ?');
+      values.push(sanitizeString(name));
+    }
+
+    if (description !== undefined) {
+      updates.push('description = ?');
+      values.push(description);
+    }
+
+    if (about_page !== undefined) {
+      updates.push('about_page = ?');
+      values.push(about_page);
+    }
+
+    if (website_url !== undefined) {
+      updates.push('website_url = ?');
+      values.push(website_url);
+    }
+
+    if (contact_email !== undefined) {
+      updates.push('contact_email = ?');
+      values.push(contact_email);
+    }
+
+    if (is_active !== undefined) {
+      updates.push('is_active = ?');
+      values.push(is_active === true || is_active === 'true' ? 1 : 0);
+    }
+
+    // Process uploaded logo or use URL
+    if (req.file) {
+      updates.push('logo_url = ?');
+      values.push(getFileUrl(req.file));
+    } else if (logo_url !== undefined) {
+      updates.push('logo_url = ?');
+      values.push(logo_url);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    values.push(id);
+    const queryText = `UPDATE partners SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+
+    await query(queryText, values);
+
+    const partnerResult = await query('SELECT * FROM partners WHERE id = ?', [id]);
+
+    res.json({
+      message: 'Partner updated successfully',
+      partner: partnerResult.rows[0]
+    });
+  } catch (error) {
+    console.error('Update partner error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete partner
+router.delete('/partners/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await query('DELETE FROM partners WHERE id = ?', [id]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Partner not found' });
+    }
+
+    res.json({ message: 'Partner deleted successfully' });
+  } catch (error) {
+    console.error('Delete partner error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Toggle partner active status
+router.patch('/partners/:id/toggle-status', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Get current status
+    const currentResult = await query('SELECT is_active FROM partners WHERE id = ?', [id]);
+
+    if (currentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Partner not found' });
+    }
+
+    const newStatus = !currentResult.rows[0].is_active;
+
+    await query(
+      'UPDATE partners SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [newStatus ? 1 : 0, id]
+    );
+
+    const partnerResult = await query('SELECT * FROM partners WHERE id = ?', [id]);
+
+    res.json({
+      message: `Partner ${newStatus ? 'activated' : 'deactivated'} successfully`,
+      partner: partnerResult.rows[0]
+    });
+  } catch (error) {
+    console.error('Toggle partner status error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

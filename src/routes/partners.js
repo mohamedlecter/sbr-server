@@ -53,7 +53,7 @@ router.get('/', optionalAuth, async (req, res) => {
 // Get single partner details
 router.get('/:id', optionalAuth, async (req, res) => {
   try {
-    const partnerId = parseInt(req.params.id, 10);
+    const partnerId = req.params.id;
 
     const result = await query(
       'SELECT * FROM partners WHERE id = ? AND is_active = true',

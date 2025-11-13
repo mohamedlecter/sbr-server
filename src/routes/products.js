@@ -787,8 +787,8 @@ router.get('/models/make-id/:makeId', async (req, res) => {
        LEFT JOIN categories c ON m.category_id = c.id
        WHERE m.api_make_id = ?
        ORDER BY m.${sortField} ${sortOrder}
-       LIMIT ? OFFSET ?`,
-      [makeId, queryLimit, offset]
+       LIMIT ${queryLimit} OFFSET ${offset}`,
+      [makeId]
     );
 
     const countResult = await query(
@@ -985,8 +985,8 @@ router.get('/models/make-name/:makeName', async (req, res) => {
        LEFT JOIN categories c ON m.category_id = c.id
        WHERE m.api_make_id = ?
        ORDER BY m.${sortField} ${sortOrder}
-       LIMIT ? OFFSET ?`,
-      [brand.api_make_id, queryLimit, offset]
+       LIMIT ${queryLimit} OFFSET ${offset}`,
+      [brand.api_make_id]
     );
 
     const countResult = await query(

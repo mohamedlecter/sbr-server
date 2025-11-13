@@ -43,61 +43,96 @@ router.get('/profile', authenticateToken, async (req, res) => {
   }
 });
 
-// Update user profile
-router.put('/profile', authenticateToken, [
-  body('full_name').optional().trim().isLength({ min: 2, max: 255 }).withMessage('Full name must be between 2 and 255 characters'),
-  body('phone').optional().isMobilePhone().withMessage('Valid phone number is required')
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
-    const { full_name, phone } = req.body;
-    const updates = [];
-    const values = [];
-    let paramCount = 1;
-
-    if (full_name) {
-      updates.push(`full_name = $${paramCount}`);
-      values.push(sanitizeString(full_name));
-      paramCount++;
-    }
-
-    if (phone) {
-      updates.push(`phone = $${paramCount}`);
-      values.push(phone);
-      paramCount++;
-    }
-
-    if (updates.length === 0) {
-      return res.status(400).json({ error: 'No fields to update' });
-    }
-
-    values.push(req.user.id);
-    const queryText = `UPDATE users SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = $${paramCount} RETURNING *`;
-
-    const result = await query(queryText, values);
-    const user = result.rows[0];
-
-    res.json({
-      message: 'Profile updated successfully',
-      user: {
-        id: user.id,
-        full_name: user.full_name,
-        email: user.email,
-        phone: user.phone,
-        membership_type: user.membership_type,
-        membership_points: user.membership_points,
-        updated_at: user.updated_at
+router.put(
+  '/profile',
+  authenticateToken,
+  [
+    body('full_name')
+      .optional()
+      .trim()
+      .isLength({ min: 2, max: 255 })
+      .withMessage('Full name must be between 2 and 255 characters'),
+    body('phone')
+      .optional()
+      .isMobilePhone()
+      .withMessage('Valid phone number is required'),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
       }
-    });
-  } catch (error) {
-    console.error('Update profile error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+
+      const { full_name, phone } = req.body;
+
+      // Build SQL SET clause dynamically
+      const setClause = [];
+      const values = [];
+
+      if (full_name) {
+        setClause.push(`full_name = ?`);
+        values.push(sanitizeString(full_name));
+      }
+
+      if (phone) {
+        setClause.push(`phone = ?`);
+        values.push(phone);
+      }
+
+      if (setClause.length === 0) {
+        return res.status(400).json({ error: 'No fields to update' });
+      }
+
+      // Add updated_at timestamp
+      setClause.push(`updated_at = CURRENT_TIMESTAMP`);
+
+      // Add user ID at the end
+      values.push(req.user.id);
+
+      // Update user info
+      const updateSql = `
+        UPDATE users 
+        SET ${setClause.join(', ')} 
+        WHERE id = ?
+      `;
+      await query(updateSql, values);
+
+      // Get updated user
+      const userResult = await query(
+        `SELECT id, full_name, email, phone, membership_type, membership_points, 
+                email_verified, phone_verified, created_at, updated_at, is_admin
+         FROM users WHERE id = ?`,
+        [req.user.id]
+      );
+
+      if (userResult.rows.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      res.json({
+        message: 'Profile updated successfully',
+        user: {
+          id: userResult.rows[0].id,
+          full_name: userResult.rows[0].full_name,
+          email: userResult.rows[0].email,
+          phone: userResult.rows[0].phone,
+          membership_type: userResult.rows[0].membership_type,
+          membership_points: userResult.rows[0].membership_points,
+          email_verified: userResult.rows[0].email_verified,
+          phone_verified: userResult.rows[0].phone_verified,
+          created_at: userResult.rows[0].created_at,
+          updated_at: userResult.rows[0].updated_at,
+          is_admin: userResult.rows[0].is_admin
+        }
+      });
+    } catch (error) {
+      console.error('Update profile error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
   }
-});
+);
+
 
 // Change password
 router.put('/change-password', authenticateToken, [
@@ -251,37 +286,30 @@ router.put('/addresses/:id', authenticateToken, [
 
     const updates = [];
     const values = [];
-    let paramCount = 1;
 
     if (label !== undefined) {
-      updates.push(`label = $${paramCount}`);
+      updates.push('label = ?');
       values.push(sanitizeString(label));
-      paramCount++;
     }
     if (country !== undefined) {
-      updates.push(`country = $${paramCount}`);
+      updates.push('country = ?');
       values.push(sanitizeString(country));
-      paramCount++;
     }
     if (city !== undefined) {
-      updates.push(`city = $${paramCount}`);
+      updates.push('city = ?');
       values.push(sanitizeString(city));
-      paramCount++;
     }
     if (street !== undefined) {
-      updates.push(`street = $${paramCount}`);
+      updates.push('street = ?');
       values.push(sanitizeString(street));
-      paramCount++;
     }
     if (postal_code !== undefined) {
-      updates.push(`postal_code = $${paramCount}`);
+      updates.push('postal_code = ?');
       values.push(postal_code);
-      paramCount++;
     }
     if (is_default !== undefined) {
-      updates.push(`is_default = $${paramCount}`);
+      updates.push('is_default = ?');
       values.push(is_default);
-      paramCount++;
     }
 
     if (updates.length === 0) {
@@ -289,13 +317,23 @@ router.put('/addresses/:id', authenticateToken, [
     }
 
     values.push(id, req.user.id);
-    const queryText = `UPDATE addresses SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = $${paramCount} AND user_id = $${paramCount + 1} RETURNING *`;
+    const queryText = `UPDATE addresses SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?`;
 
-    const result = await query(queryText, values);
+    await query(queryText, values);
+
+    // Get updated address
+    const addressResult = await query(
+      'SELECT * FROM addresses WHERE id = ? AND user_id = ?',
+      [id, req.user.id]
+    );
+
+    if (addressResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Address not found' });
+    }
 
     res.json({
       message: 'Address updated successfully',
-      address: result.rows[0]
+      address: addressResult.rows[0]
     });
   } catch (error) {
     console.error('Update address error:', error);
