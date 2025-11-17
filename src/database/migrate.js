@@ -5,18 +5,25 @@ const path = require('path');
 const migrate = async () => {
     try {
         console.log('Starting database migration...');
-        
+
         // Read the schema file
         const schemaPath = path.join(__dirname, 'schema.sql');
-        const schema = fs.readFileSync(schemaPath, 'utf8');
+        let schema = fs.readFileSync(schemaPath, 'utf8');
+
+        // --- ENHANCED FIX ---
         
-        // --- START OF FIX ---
-        // 1. Split the schema into individual statements using ';'
-        // 2. Filter out empty strings and comments that result from the split
+        // 1. Remove SQL comments (starts with --) and replace newlines with a space
+        schema = schema.replace(/--.*$/gm, '').replace(/\n/g, ' '); 
+
+        // 2. Remove multiple spaces and trim
+        schema = schema.replace(/\s+/g, ' ').trim();
+
+        // 3. Split the schema into individual statements using ';'
+        //    Then filter out any resulting empty statements.
         const statements = schema
             .split(';')
             .map(s => s.trim())
-            .filter(s => s.length > 0 && !s.startsWith('--')); 
+            .filter(s => s.length > 0);
             
         console.log(`Found ${statements.length} SQL statements to execute.`);
 
@@ -30,9 +37,8 @@ const migrate = async () => {
         
         console.log('Database migration completed successfully!');
     } catch (error) {
+        console.error('Database query error:', error);
         console.error('Migration failed:', error);
-        // Log the specific SQL command that caused the failure if you wish
-        // console.error('Failing SQL:', error.sql); 
         process.exit(1);
     }
 };
