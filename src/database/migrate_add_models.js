@@ -8,7 +8,7 @@ const migrateAddModels = async () => {
     const brandColumns = await query(`
       SELECT COLUMN_NAME 
       FROM INFORMATION_SCHEMA.COLUMNS 
-      WHERE TABLE_SCHEMA = DATABASE() 
+      WHERE TABLE_SCHEMA = 'sbr_db_dev'
       AND TABLE_NAME = 'brands' 
       AND COLUMN_NAME = 'api_make_id'
     `);
@@ -24,7 +24,7 @@ const migrateAddModels = async () => {
     const categoryColumns = await query(`
       SELECT COLUMN_NAME 
       FROM INFORMATION_SCHEMA.COLUMNS 
-      WHERE TABLE_SCHEMA = DATABASE() 
+      WHERE TABLE_SCHEMA = 'sbr_db_dev'
       AND TABLE_NAME = 'categories' 
       AND COLUMN_NAME = 'api_category_id'
     `);
@@ -40,7 +40,7 @@ const migrateAddModels = async () => {
     const tables = await query(`
       SELECT TABLE_NAME 
       FROM INFORMATION_SCHEMA.TABLES 
-      WHERE TABLE_SCHEMA = DATABASE() 
+      WHERE TABLE_SCHEMA = 'sbr_db_dev'
       AND TABLE_NAME = 'models'
     `);
 
