@@ -78,7 +78,7 @@ const migrateAddModels = async () => {
       const existingIndex = await query(`
         SELECT COUNT(*) as count
         FROM INFORMATION_SCHEMA.STATISTICS
-        WHERE TABLE_SCHEMA = DATABASE()
+        WHERE TABLE_SCHEMA = 'sbr_db_dev'
         AND TABLE_NAME = ?
         AND INDEX_NAME = ?
       `, [index.table, index.name]);
