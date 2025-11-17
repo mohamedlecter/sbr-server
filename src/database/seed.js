@@ -130,6 +130,7 @@ async function seedDatabase() {
     await insertBrands();
     await insertCategories();
     await insertModels();
+    await addAdminUser();
     console.log('Database seeding completed!');
     process.exit(0);
   } catch (err) {
