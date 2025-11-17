@@ -122,7 +122,11 @@ async function insertModels() {
 
 addAdminUser = async () => {
   let password_hash = await bcrypt.hash('admin@admin', 12);
-  await query('INSERT INTO users (full_name, email, password_hash, is_admin) VALUES (?, ?, ?, ?)', ['Admin', 'admin@admin.com', password_hash, true]);
+  await query(
+    'INSERT INTO users (id, full_name, email, password_hash, is_admin) VALUES (?, ?, ?, ?, ?)',
+    [uuidv4(), 'Admin', 'admin@admin.com', password_hash, true]
+  );
+  
 }
 
 // Main seeding function
