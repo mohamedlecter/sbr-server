@@ -668,8 +668,8 @@ SELECT COUNT(*) AS count FROM merchandise m ${merchWhereClause}
 });
 // Create new part
 router.post('/parts', authenticateToken, requireAdmin, uploadMultiple('images', 10), [
-  body('brand_id').isUUID().withMessage('Valid brand ID is required'),
-  body('category_id').isUUID().withMessage('Valid category ID is required'),
+  body('brand_id'),
+  body('category_id'),
   body('name').trim().notEmpty().withMessage('Part name is required'),
   body('description').optional().isString().withMessage('Description must be a string'),
   body('original_price').isFloat({ min: 0 }).withMessage('Original price must be positive'),
