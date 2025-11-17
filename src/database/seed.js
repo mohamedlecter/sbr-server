@@ -12,6 +12,7 @@
  */
 
 const { query } = require('./connection'); // your DB connection helper
+const { v4: uuidv4 } = require('uuid');
 const https = require('https');
 const bcrypt = require('bcryptjs');
 const API_KEY = 'a9e3502d15msh462887bed5f186dp1d18c0jsn53d570692a14';
