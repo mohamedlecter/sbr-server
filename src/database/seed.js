@@ -16,7 +16,8 @@ const { query } = require('./connection');
 const https = require('https');
 // NOTE: You will need to install and configure 'bcrypt' or a similar library 
 // and implement the actual hashPassword function in your project.
-const { hashPassword } = require('./auth/utils'); // Placeholder for password hashing
+const bcrypt = require('bcryptjs');
+const { v4: uuidv4 } = require('uuid');
 
 const API_KEY = 'a9e3502d15msh462887bed5f186dp1d18c0jsn53d570692a14';
 const API_HOST = 'motorcycle-specs-database.p.rapidapi.com';
@@ -717,8 +718,8 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 // Function to add a default admin user
 const addAdminUser = async () => {
   console.log('Adding default admin user...');
-  const email = 'admin@example.com';
-  const plainPassword = 'password123'; // NOTE: Change this in a production environment!
+  const email = 'admin@admin.com';
+  const plainPassword = 'admin@admin'; // NOTE: Change this in a production environment!
   let hashedPassword;
 
   try {
@@ -731,7 +732,7 @@ const addAdminUser = async () => {
     
     // Hash the password (Requires a real hashing function like one using bcrypt)
     try {
-      hashedPassword = await hashPassword(plainPassword);
+      hashedPassword = await bcrypt.hash(plainPassword, 12);
     } catch (e) {
       console.error('  Error hashing password. Ensure `hashPassword` function is correctly implemented:', e.message);
       // For seeding purposes, if hashing fails, we'll stop to prevent inserting a plaintext password.
@@ -741,8 +742,8 @@ const addAdminUser = async () => {
 
     // Insert the admin user with a placeholder role (assuming a `role` column exists)
     await query(
-      'INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)',
-      [email, hashedPassword, 'admin']
+      'INSERT INTO users (id, full_name, email, password_hash, is_admin) VALUES (?, ?, ?, ?, ?)',
+      [uuidv4(), 'Admin', email, hashedPassword, true]
     );
     console.log(`  ✓ Default admin user inserted: ${email} (Password: ${plainPassword} - Hashed)`);
 
