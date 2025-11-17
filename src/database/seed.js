@@ -808,8 +808,8 @@ const seed = async () => {
       if (category.id && category.name) {
         try {
           await query(
-            'INSERT INTO categories (name, api_category_id) VALUES (?, ?)',
-            [category.name, parseInt(category.id)]
+            'INSERT INTO categories (id, name, api_category_id) VALUES (?,?, ?)',
+            [parseInt(category.id),category.name, parseInt(category.id)]
           );
           
           // Get the inserted category ID
