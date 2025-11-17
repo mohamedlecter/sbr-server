@@ -1,8 +1,32 @@
 USE sbr_db_dev;
 
+-- ------------------------------
+-- 1. CLEANUP: Drop tables in reverse order of dependencies
+-- ------------------------------
+DROP TABLE IF EXISTS custom_builds;
+DROP TABLE IF EXISTS cart_items;
+DROP TABLE IF EXISTS ambassadors;
+DROP TABLE IF EXISTS partners;
+DROP TABLE IF EXISTS feedbacks;
+DROP TABLE IF EXISTS payments;
+DROP TABLE IF EXISTS order_items;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS merchandise;
+DROP TABLE IF EXISTS parts;
+DROP TABLE IF EXISTS models;
+DROP TABLE IF EXISTS categories;
+DROP TABLE IF EXISTS brands;
+DROP TABLE IF EXISTS addresses;
+DROP TABLE IF EXISTS users;
+
+
+-- ------------------------------
+-- 2. CREATE TABLES (UUID() default removed)
+-- ------------------------------
+
 -- Users table
 CREATE TABLE users (
-    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    id CHAR(36) PRIMARY KEY, -- Removed DEFAULT (UUID())
     full_name VARCHAR(255) NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
     phone VARCHAR(20),
@@ -20,7 +44,7 @@ CREATE TABLE users (
 
 -- Addresses table
 CREATE TABLE addresses (
-    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    id CHAR(36) PRIMARY KEY, -- Removed DEFAULT (UUID())
     user_id CHAR(36) NOT NULL,
     label VARCHAR(100) NOT NULL,
     country VARCHAR(100) NOT NULL,
@@ -35,7 +59,7 @@ CREATE TABLE addresses (
 
 -- Brands table
 CREATE TABLE brands (
-    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    id CHAR(36) PRIMARY KEY, -- Removed DEFAULT (UUID())
     name VARCHAR(255) NOT NULL UNIQUE,
     logo_url VARCHAR(500),
     description TEXT,
@@ -46,7 +70,7 @@ CREATE TABLE brands (
 
 -- Categories table (with self-referencing for nested categories)
 CREATE TABLE categories (
-    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    id CHAR(36) PRIMARY KEY, -- Removed DEFAULT (UUID())
     name VARCHAR(255) NOT NULL,
     parent_id CHAR(36) NULL,
     description TEXT,
@@ -59,7 +83,7 @@ CREATE TABLE categories (
 
 -- Motorcycle Models table
 CREATE TABLE models (
-    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    id CHAR(36) PRIMARY KEY, -- Removed DEFAULT (UUID())
     brand_id CHAR(36) NOT NULL,
     category_id CHAR(36) NULL,
     name VARCHAR(255) NOT NULL,
@@ -75,7 +99,7 @@ CREATE TABLE models (
 
 -- Parts table
 CREATE TABLE parts (
-    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    id CHAR(36) PRIMARY KEY, -- Removed DEFAULT (UUID())
     brand_id CHAR(36) NOT NULL,
     category_id CHAR(36) NOT NULL,
     name VARCHAR(255) NOT NULL,
@@ -98,7 +122,7 @@ CREATE TABLE parts (
 
 -- Merchandise table
 CREATE TABLE merchandise (
-    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    id CHAR(36) PRIMARY KEY, -- Removed DEFAULT (UUID())
     name VARCHAR(255) NOT NULL,
     description TEXT,
     images JSON,
@@ -116,7 +140,7 @@ CREATE TABLE merchandise (
 
 -- Orders table
 CREATE TABLE orders (
-    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    id CHAR(36) PRIMARY KEY, -- Removed DEFAULT (UUID())
     user_id CHAR(36) NOT NULL,
     status ENUM('pending', 'paid', 'shipped', 'delivered', 'cancelled') DEFAULT 'pending',
     total_amount DECIMAL(10,2) NOT NULL,
@@ -132,7 +156,7 @@ CREATE TABLE orders (
 
 -- Order items table
 CREATE TABLE order_items (
-    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    id CHAR(36) PRIMARY KEY, -- Removed DEFAULT (UUID())
     order_id CHAR(36) NOT NULL,
     product_type ENUM('part', 'merch') NOT NULL,
     product_id CHAR(36) NOT NULL,
@@ -144,7 +168,7 @@ CREATE TABLE order_items (
 
 -- Payments table
 CREATE TABLE payments (
-    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    id CHAR(36) PRIMARY KEY, -- Removed DEFAULT (UUID())
     order_id CHAR(36) NOT NULL,
     method ENUM('sadad', 'paypal', 'cash', 'pay_later', 'stripe') NOT NULL,
     amount DECIMAL(10,2) NOT NULL,
@@ -158,7 +182,7 @@ CREATE TABLE payments (
 
 -- Feedback table
 CREATE TABLE feedbacks (
-    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    id CHAR(36) PRIMARY KEY, -- Removed DEFAULT (UUID())
     user_id CHAR(36) NOT NULL,
     message TEXT NOT NULL,
     rating INT CHECK (rating >= 1 AND rating <= 5),
@@ -170,7 +194,7 @@ CREATE TABLE feedbacks (
 
 -- Partners table
 CREATE TABLE partners (
-    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    id CHAR(36) PRIMARY KEY, -- Removed DEFAULT (UUID())
     name VARCHAR(255) NOT NULL,
     logo_url VARCHAR(500),
     description TEXT,
@@ -184,7 +208,7 @@ CREATE TABLE partners (
 
 -- Ambassadors table
 CREATE TABLE ambassadors (
-    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    id CHAR(36) PRIMARY KEY, -- Removed DEFAULT (UUID())
     user_id CHAR(36) NOT NULL,
     social_links JSON,
     follower_count INT DEFAULT 0,
@@ -199,7 +223,7 @@ CREATE TABLE ambassadors (
 
 -- Shopping cart table
 CREATE TABLE cart_items (
-    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    id CHAR(36) PRIMARY KEY, -- Removed DEFAULT (UUID())
     user_id CHAR(36) NOT NULL,
     product_type ENUM('part', 'merch') NOT NULL,
     product_id CHAR(36) NOT NULL,
@@ -212,7 +236,7 @@ CREATE TABLE cart_items (
 
 -- Custom bike builds table
 CREATE TABLE custom_builds (
-    id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    id CHAR(36) PRIMARY KEY, -- Removed DEFAULT (UUID())
     user_id CHAR(36) NOT NULL,
     name VARCHAR(255) NOT NULL,
     description TEXT,
@@ -226,7 +250,9 @@ CREATE TABLE custom_builds (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- Indexes for better performance
+-- ------------------------------
+-- 3. CREATE INDEXES
+-- ------------------------------
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_membership_type ON users(membership_type);
 CREATE INDEX idx_addresses_user_id ON addresses(user_id);
