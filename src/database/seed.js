@@ -13,7 +13,7 @@
 
 const { query } = require('./connection'); // your DB connection helper
 const https = require('https');
-
+const bcrypt = require('bcryptjs');
 const API_KEY = 'a9e3502d15msh462887bed5f186dp1d18c0jsn53d570692a14';
 const API_HOST = 'motorcycle-specs-database.p.rapidapi.com';
 
@@ -121,7 +121,8 @@ async function insertModels() {
 }
 
 addAdminUser = async () => {
-  await query('INSERT INTO users (full_name, email, password, is_admin) VALUES (?, ?, ?, ?)', ['Admin', 'admin@admin.com', 'admin@admin', true]);
+  let password_hash = await bcrypt.hash('admin@admin', 12);
+  await query('INSERT INTO users (full_name, email, password_hash, is_admin) VALUES (?, ?, ?, ?)', ['Admin', 'admin@admin.com', password_hash, true]);
 }
 
 // Main seeding function
