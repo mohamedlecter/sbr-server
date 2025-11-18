@@ -668,8 +668,8 @@ SELECT COUNT(*) AS count FROM merchandise m ${merchWhereClause}
 });
 // Create new part
 router.post('/parts', authenticateToken, requireAdmin, uploadMultiple('images', 10), [
-  body('brand_id'),
-  body('category_id'),
+  body('brand_id').isUUID().withMessage('Valid brand ID is required'),
+  body('category_id').isUUID().withMessage('Valid category ID is required'),
   body('name').trim().notEmpty().withMessage('Part name is required'),
   body('description').optional().isString().withMessage('Description must be a string'),
   body('original_price').isFloat({ min: 0 }).withMessage('Original price must be positive'),
@@ -1319,6 +1319,317 @@ router.delete('/categories/:id', authenticateToken, requireAdmin, async (req, re
     res.json({ message: 'Category deleted successfully' });
   } catch (error) {
     console.error('Delete category error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ===== MODEL MANAGEMENT =====
+
+// Get all models
+router.get('/models', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { page = 1, limit = 20, search, brand_id, category_id, year } = req.query;
+    const { offset, limit: queryLimit } = paginate(page, limit);
+
+    let whereConditions = [];
+    let queryParams = [];
+
+    if (search) {
+      whereConditions.push('(LOWER(m.name) LIKE ? OR LOWER(b.name) LIKE ?)');
+      queryParams.push(`%${sanitizeString(search).toLowerCase()}%`);
+      queryParams.push(`%${sanitizeString(search).toLowerCase()}%`);
+    }
+
+    if (brand_id) {
+      whereConditions.push('m.brand_id = ?');
+      queryParams.push(brand_id);
+    }
+
+    if (category_id) {
+      whereConditions.push('m.category_id = ?');
+      queryParams.push(category_id);
+    }
+
+    if (year) {
+      whereConditions.push('m.year = ?');
+      queryParams.push(parseInt(year));
+    }
+
+    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+
+    const result = await query(
+      `SELECT m.*, 
+              b.name as brand_name, 
+              b.logo_url as brand_logo,
+              c.name as category_name
+       FROM models m
+       LEFT JOIN brands b ON m.brand_id = b.id
+       LEFT JOIN categories c ON m.category_id = c.id
+       ${whereClause}
+       ORDER BY m.created_at DESC
+       LIMIT ${queryLimit} OFFSET ${offset}`,
+      queryParams
+    );
+
+    const countResult = await query(
+      `SELECT COUNT(*) as count
+       FROM models m
+       LEFT JOIN brands b ON m.brand_id = b.id
+       LEFT JOIN categories c ON m.category_id = c.id
+       ${whereClause}`,
+      queryParams
+    );
+
+    res.json({
+      models: result.rows,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: parseInt(countResult.rows[0].count),
+        pages: Math.ceil(countResult.rows[0].count / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Get models error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get single model
+router.get('/models/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await query(
+      `SELECT m.*, 
+              b.name as brand_name, 
+              b.logo_url as brand_logo,
+              c.name as category_name
+       FROM models m
+       LEFT JOIN brands b ON m.brand_id = b.id
+       LEFT JOIN categories c ON m.category_id = c.id
+       WHERE m.id = ?`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Model not found' });
+    }
+
+    const model = result.rows[0];
+    
+    // Parse specifications JSON if it exists
+    if (model.specifications) {
+      try {
+        model.specifications = typeof model.specifications === 'string' 
+          ? JSON.parse(model.specifications) 
+          : model.specifications;
+      } catch (e) {
+        model.specifications = null;
+      }
+    }
+
+    res.json({ model });
+  } catch (error) {
+    console.error('Get model error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create new model
+router.post('/models', authenticateToken, requireAdmin, [
+  body('brand_id').isUUID().withMessage('Brand ID must be a valid UUID'),
+  body('name').trim().notEmpty().withMessage('Model name is required'),
+  body('category_id').optional().isUUID().withMessage('Category ID must be a valid UUID'),
+  body('year').optional().isInt({ min: 1900, max: 2100 }).withMessage('Year must be a valid year'),
+  body('specifications').optional().isString().withMessage('Specifications must be a JSON string')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { brand_id, name, category_id, year, specifications } = req.body;
+
+    // Verify brand exists
+    const brandResult = await query('SELECT id FROM brands WHERE id = ?', [brand_id]);
+    if (brandResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Brand not found' });
+    }
+
+    // Verify category exists if provided
+    if (category_id) {
+      const categoryResult = await query('SELECT id FROM categories WHERE id = ?', [category_id]);
+      if (categoryResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Category not found' });
+      }
+    }
+
+    // Parse specifications JSON if provided
+    let specsJson = null;
+    if (specifications) {
+      try {
+        specsJson = typeof specifications === 'string' ? JSON.parse(specifications) : specifications;
+        specsJson = JSON.stringify(specsJson);
+      } catch (e) {
+        return res.status(400).json({ error: 'Invalid specifications JSON format' });
+      }
+    }
+
+    const id = uuidv4();
+
+    await query(
+      'INSERT INTO models (id, brand_id, category_id, name, year, specifications) VALUES (?, ?, ?, ?, ?, ?)',
+      [id, brand_id, category_id || null, sanitizeString(name), year ? parseInt(year) : null, specsJson]
+    );
+
+    const modelResult = await query(
+      `SELECT m.*, 
+              b.name as brand_name, 
+              b.logo_url as brand_logo,
+              c.name as category_name
+       FROM models m
+       LEFT JOIN brands b ON m.brand_id = b.id
+       LEFT JOIN categories c ON m.category_id = c.id
+       WHERE m.id = ?`,
+      [id]
+    );
+
+    res.status(201).json({
+      message: 'Model created successfully',
+      model: modelResult.rows[0]
+    });
+  } catch (error) {
+    console.error('Create model error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update model
+router.put('/models/:id', authenticateToken, requireAdmin, [
+  body('brand_id').optional().isUUID().withMessage('Brand ID must be a valid UUID'),
+  body('name').optional().trim().notEmpty().withMessage('Model name cannot be empty'),
+  body('category_id').optional().isUUID().withMessage('Category ID must be a valid UUID'),
+  body('year').optional().isInt({ min: 1900, max: 2100 }).withMessage('Year must be a valid year'),
+  body('specifications').optional().isString().withMessage('Specifications must be a JSON string')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { id } = req.params;
+    const { brand_id, name, category_id, year, specifications } = req.body;
+
+    // Check if model exists
+    const modelCheck = await query('SELECT id FROM models WHERE id = ?', [id]);
+    if (modelCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Model not found' });
+    }
+
+    // Verify brand exists if provided
+    if (brand_id) {
+      const brandResult = await query('SELECT id FROM brands WHERE id = ?', [brand_id]);
+      if (brandResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Brand not found' });
+      }
+    }
+
+    // Verify category exists if provided
+    if (category_id) {
+      const categoryResult = await query('SELECT id FROM categories WHERE id = ?', [category_id]);
+      if (categoryResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Category not found' });
+      }
+    }
+
+    const updates = [];
+    const values = [];
+
+    if (brand_id !== undefined) {
+      updates.push('brand_id = ?');
+      values.push(brand_id);
+    }
+
+    if (name !== undefined) {
+      updates.push('name = ?');
+      values.push(sanitizeString(name));
+    }
+
+    if (category_id !== undefined) {
+      updates.push('category_id = ?');
+      values.push(category_id || null);
+    }
+
+    if (year !== undefined) {
+      updates.push('year = ?');
+      values.push(year ? parseInt(year) : null);
+    }
+
+    if (specifications !== undefined) {
+      let specsJson = null;
+      if (specifications) {
+        try {
+          const parsed = typeof specifications === 'string' ? JSON.parse(specifications) : specifications;
+          specsJson = JSON.stringify(parsed);
+        } catch (e) {
+          return res.status(400).json({ error: 'Invalid specifications JSON format' });
+        }
+      }
+      updates.push('specifications = ?');
+      values.push(specsJson);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    values.push(id);
+    const queryText = `UPDATE models SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+
+    await query(queryText, values);
+
+    const modelResult = await query(
+      `SELECT m.*, 
+              b.name as brand_name, 
+              b.logo_url as brand_logo,
+              c.name as category_name
+       FROM models m
+       LEFT JOIN brands b ON m.brand_id = b.id
+       LEFT JOIN categories c ON m.category_id = c.id
+       WHERE m.id = ?`,
+      [id]
+    );
+
+    res.json({
+      message: 'Model updated successfully',
+      model: modelResult.rows[0]
+    });
+  } catch (error) {
+    console.error('Update model error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete model
+router.delete('/models/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Check if model has associated parts (via compatibility JSON)
+    // Note: This is a simplified check. In a real scenario, you might want to check
+    // if any parts have this model in their compatibility JSON field
+    const result = await query('DELETE FROM models WHERE id = ?', [id]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Model not found' });
+    }
+
+    res.json({ message: 'Model deleted successfully' });
+  } catch (error) {
+    console.error('Delete model error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

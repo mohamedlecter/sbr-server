@@ -28,9 +28,13 @@ const migrate = async () => {
         console.log(`Found ${statements.length} SQL statements to execute.`);
 
         // Execute each statement sequentially
-        for (const statement of statements) {
-            // Optional: Log the statement being executed (for debugging)
-            // console.log(`Executing: ${statement.substring(0, 50)}...`);
+        for (let i = 0; i < statements.length; i++) {
+            const statement = statements[i];
+            // Log DROP and CREATE statements for clarity
+            const statementType = statement.toUpperCase().trim().substring(0, 4);
+            if (statementType === 'DROP' || statementType === 'CREA' || statementType === 'USE ') {
+                console.log(`Executing statement ${i + 1}/${statements.length}: ${statementType}...`);
+            }
             await query(statement);
         }
         // --- END OF FIX ---
