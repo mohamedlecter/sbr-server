@@ -51,10 +51,10 @@ router.get('/dashboard', authenticateToken, requireAdmin, async (req, res) => {
         LIMIT 10
       `),
       query(`
-        SELECT p.name, b.name as brand_name, SUM(oi.quantity) as total_sold
+        SELECT p.name, b.name as manufacturer_name, SUM(oi.quantity) as total_sold
         FROM order_items oi
         JOIN parts p ON oi.product_type = 'part' AND oi.product_id = p.id
-        JOIN brands b ON p.brand_id = b.id
+        JOIN manufacturers b ON p.manufacturer_id = b.id
         GROUP BY p.id, p.name, b.name
         ORDER BY total_sold DESC
         LIMIT 10
@@ -528,7 +528,7 @@ router.get('/products', authenticateToken, requireAdmin, async (req, res) => {
       limit = 20, 
       search, 
       category_id, 
-      brand_id, 
+      manufacturer_id, 
       min_price, 
       max_price, 
       color, 
@@ -552,9 +552,9 @@ router.get('/products', authenticateToken, requireAdmin, async (req, res) => {
       partsWhere.push(`p.category_id = ?`);
       partsParams.push(parseInt(category_id, 10));
     }
-    if (brand_id) {
-      partsWhere.push(`p.brand_id = ?`);
-      partsParams.push(parseInt(brand_id, 10));
+    if (manufacturer_id) {
+      partsWhere.push(`p.manufacturer_id = ?`);
+      partsParams.push(parseInt(manufacturer_id, 10));
     }
     if (min_price) {
       partsWhere.push(`p.selling_price >= ?`);
@@ -573,9 +573,9 @@ router.get('/products', authenticateToken, requireAdmin, async (req, res) => {
     const partsSortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
     const partsWhereClause = partsWhere.length > 0 ? `WHERE ${partsWhere.join(' AND ')}` : '';
     const partsSql = `
-      SELECT p.*, b.name as brand_name, b.logo_url as brand_logo, c.name as category_name
+      SELECT p.*, b.name as manufacturer_name, b.logo_url as manufacturer_logo, c.name as category_name
       FROM parts p
-      JOIN brands b ON p.brand_id = b.id
+      JOIN manufacturers b ON p.manufacturer_id = b.id
       JOIN categories c ON p.category_id = c.id
       ${partsWhereClause}
       ORDER BY p.${partsSortField} ${partsSortOrder}
@@ -584,7 +584,7 @@ router.get('/products', authenticateToken, requireAdmin, async (req, res) => {
     const partsCountSql = `
       SELECT COUNT(*)
       FROM parts p
-      JOIN brands b ON p.brand_id = b.id
+      JOIN manufacturers b ON p.manufacturer_id = b.id
       JOIN categories c ON p.category_id = c.id
       ${partsWhereClause}
     `;
@@ -658,7 +658,7 @@ SELECT COUNT(*) AS count FROM merchandise m ${merchWhereClause}
         total: parseInt(merchCountResult.rows[0]['COUNT(*)']),
         pages: Math.ceil(merchCountResult.rows[0]['COUNT(*)'] / limit)
       },
-      filters: { search, category_id, brand_id, min_price, max_price, color, size, in_stock, sort, order }
+      filters: { search, category_id, manufacturer_id, min_price, max_price, color, size, in_stock, sort, order }
     });
     
   } catch (error) {
@@ -668,7 +668,7 @@ SELECT COUNT(*) AS count FROM merchandise m ${merchWhereClause}
 });
 // Create new part
 router.post('/parts', authenticateToken, requireAdmin, uploadMultiple('images', 10), [
-  body('brand_id').isUUID().withMessage('Valid brand ID is required'),
+  body('manufacturer_id').isUUID().withMessage('Valid manufacturer ID is required'),
   body('category_id').isUUID().withMessage('Valid category ID is required'),
   body('name').trim().notEmpty().withMessage('Part name is required'),
   body('description').optional().isString().withMessage('Description must be a string'),
@@ -686,7 +686,7 @@ router.post('/parts', authenticateToken, requireAdmin, uploadMultiple('images', 
     }
 
     const {
-      brand_id, category_id, name, description, original_price, selling_price,
+      manufacturer_id, category_id, name, description, original_price, selling_price,
       quantity, weight, color_options, compatibility
     } = req.body;
 
@@ -708,12 +708,12 @@ router.post('/parts', authenticateToken, requireAdmin, uploadMultiple('images', 
 
     // Verify brand and category exist
     const [brandResult, categoryResult] = await Promise.all([
-      query('SELECT id FROM brands WHERE id = ?', [brand_id]),
+      query('SELECT id FROM manufacturers WHERE id = ?', [manufacturer_id]),
       query('SELECT id FROM categories WHERE id = ?', [category_id])
     ]);
 
     if (brandResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Brand not found' });
+      return res.status(404).json({ error: 'Manufacturer not found' });
     }
 
     if (categoryResult.rows.length === 0) {
@@ -721,11 +721,11 @@ router.post('/parts', authenticateToken, requireAdmin, uploadMultiple('images', 
     }
 
      await query(
-      `INSERT INTO parts (id, brand_id, category_id, name, description, original_price, selling_price, 
+      `INSERT INTO parts (id, manufacturer_id, category_id, name, description, original_price, selling_price, 
                          quantity, weight, images, color_options, compatibility)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        `,
-      [id, brand_id, category_id, sanitizeString(name), description, original_price, selling_price,
+      [id, manufacturer_id, category_id, sanitizeString(name), description, original_price, selling_price,
        quantity, weight, JSON.stringify(images), JSON.stringify(color_options), JSON.stringify(compatibility)]
     );
 
@@ -1009,7 +1009,7 @@ router.delete('/merchandise/:id', authenticateToken, requireAdmin, async (req, r
 });
 
 // Create new brand
-router.post('/brands',
+router.post('/manufacturers',
   authenticateToken,
   requireAdmin,
   uploadSingle('logo'),
@@ -1035,12 +1035,12 @@ router.post('/brands',
 
       // Insert the new brand
       await query(
-        'INSERT INTO brands (id, name, description, logo_url) VALUES (?, ?, ?, ?)',
+        'INSERT INTO manufacturers (id, name, description, logo_url) VALUES (?, ?, ?, ?)',
         [id, sanitizeString(name), description ?? null, logoUrl]
       );
 
       // Retrieve the newly created brand
-      const brandResult = await query('SELECT * FROM brands WHERE id = ?', [id]);
+      const brandResult = await query('SELECT * FROM manufacturers WHERE id = ?', [id]);
 
       res.status(201).json({
         message: 'Brand created successfully',
@@ -1054,7 +1054,7 @@ router.post('/brands',
 );
 
 // Update brand
-router.put('/brands/:id', authenticateToken, requireAdmin, uploadSingle('logo'), [
+router.put('/manufacturers/:id', authenticateToken, requireAdmin, uploadSingle('logo'), [
   body('name').optional().trim().notEmpty().withMessage('Brand name cannot be empty'),
   body('description').optional().isString().withMessage('Description must be a string')
 ], async (req, res) => {
@@ -1094,11 +1094,11 @@ router.put('/brands/:id', authenticateToken, requireAdmin, uploadSingle('logo'),
     }
 
     values.push(id);
-    const queryText = `UPDATE brands SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+    const queryText = `UPDATE manufacturers SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
 
     await query(queryText, values);
 
-    const brandResult = await query('SELECT * FROM brands WHERE id = ?', [id]);
+    const brandResult = await query('SELECT * FROM manufacturers WHERE id = ?', [id]);
 
     res.json({
       message: 'Brand updated successfully',
@@ -1114,13 +1114,13 @@ router.put('/brands/:id', authenticateToken, requireAdmin, uploadSingle('logo'),
 });
 
 // Delete brand
-router.delete('/brands/:id', authenticateToken, requireAdmin, async (req, res) => {
+router.delete('/manufacturers/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
     // Check if brand has associated parts
     const partsResult = await query(
-      'SELECT COUNT(*) FROM parts WHERE brand_id = ?',
+      'SELECT COUNT(*) FROM parts WHERE manufacturer_id = ?',
       [id]
     );
 
@@ -1132,7 +1132,7 @@ router.delete('/brands/:id', authenticateToken, requireAdmin, async (req, res) =
     }
 
     const result = await query(
-      'DELETE FROM brands WHERE id = ?',
+      'DELETE FROM manufacturers WHERE id = ?',
       [id]
     );
 
@@ -1328,7 +1328,7 @@ router.delete('/categories/:id', authenticateToken, requireAdmin, async (req, re
 // Get all models
 router.get('/models', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { page = 1, limit = 20, search, brand_id, category_id, year } = req.query;
+    const { page = 1, limit = 20, search, manufacturer_id, category_id, year } = req.query;
     const { offset, limit: queryLimit } = paginate(page, limit);
 
     let whereConditions = [];
@@ -1340,9 +1340,9 @@ router.get('/models', authenticateToken, requireAdmin, async (req, res) => {
       queryParams.push(`%${sanitizeString(search).toLowerCase()}%`);
     }
 
-    if (brand_id) {
-      whereConditions.push('m.brand_id = ?');
-      queryParams.push(brand_id);
+    if (manufacturer_id) {
+      whereConditions.push('m.manufacturer_id = ?');
+      queryParams.push(manufacturer_id);
     }
 
     if (category_id) {
@@ -1359,11 +1359,11 @@ router.get('/models', authenticateToken, requireAdmin, async (req, res) => {
 
     const result = await query(
       `SELECT m.*, 
-              b.name as brand_name, 
-              b.logo_url as brand_logo,
+              b.name as manufacturer_name, 
+              b.logo_url as manufacturer_logo,
               c.name as category_name
        FROM models m
-       LEFT JOIN brands b ON m.brand_id = b.id
+       LEFT JOIN manufacturers b ON m.manufacturer_id = b.id
        LEFT JOIN categories c ON m.category_id = c.id
        ${whereClause}
        ORDER BY m.created_at DESC
@@ -1374,7 +1374,7 @@ router.get('/models', authenticateToken, requireAdmin, async (req, res) => {
     const countResult = await query(
       `SELECT COUNT(*) as count
        FROM models m
-       LEFT JOIN brands b ON m.brand_id = b.id
+       LEFT JOIN manufacturers b ON m.manufacturer_id = b.id
        LEFT JOIN categories c ON m.category_id = c.id
        ${whereClause}`,
       queryParams
@@ -1402,11 +1402,11 @@ router.get('/models/:id', authenticateToken, requireAdmin, async (req, res) => {
 
     const result = await query(
       `SELECT m.*, 
-              b.name as brand_name, 
-              b.logo_url as brand_logo,
+              b.name as manufacturer_name, 
+              b.logo_url as manufacturer_logo,
               c.name as category_name
        FROM models m
-       LEFT JOIN brands b ON m.brand_id = b.id
+       LEFT JOIN manufacturers b ON m.manufacturer_id = b.id
        LEFT JOIN categories c ON m.category_id = c.id
        WHERE m.id = ?`,
       [id]
@@ -1438,7 +1438,7 @@ router.get('/models/:id', authenticateToken, requireAdmin, async (req, res) => {
 
 // Create new model
 router.post('/models', authenticateToken, requireAdmin, [
-  body('brand_id').isUUID().withMessage('Brand ID must be a valid UUID'),
+  body('manufacturer_id').isUUID().withMessage('Manufacturer ID must be a valid UUID'),
   body('name').trim().notEmpty().withMessage('Model name is required'),
   body('category_id').optional().isUUID().withMessage('Category ID must be a valid UUID'),
   body('year').optional().isInt({ min: 1900, max: 2100 }).withMessage('Year must be a valid year'),
@@ -1450,10 +1450,10 @@ router.post('/models', authenticateToken, requireAdmin, [
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { brand_id, name, category_id, year, specifications } = req.body;
+    const { manufacturer_id, name, category_id, year, specifications } = req.body;
 
     // Verify brand exists
-    const brandResult = await query('SELECT id FROM brands WHERE id = ?', [brand_id]);
+    const brandResult = await query('SELECT id FROM manufacturers WHERE id = ?', [manufacturer_id]);
     if (brandResult.rows.length === 0) {
       return res.status(404).json({ error: 'Brand not found' });
     }
@@ -1480,17 +1480,17 @@ router.post('/models', authenticateToken, requireAdmin, [
     const id = uuidv4();
 
     await query(
-      'INSERT INTO models (id, brand_id, category_id, name, year, specifications) VALUES (?, ?, ?, ?, ?, ?)',
-      [id, brand_id, category_id || null, sanitizeString(name), year ? parseInt(year) : null, specsJson]
+      'INSERT INTO models (id, manufacturer_id, category_id, name, year, specifications) VALUES (?, ?, ?, ?, ?, ?)',
+      [id, manufacturer_id, category_id || null, sanitizeString(name), year ? parseInt(year) : null, specsJson]
     );
 
     const modelResult = await query(
       `SELECT m.*, 
-              b.name as brand_name, 
-              b.logo_url as brand_logo,
+              b.name as manufacturer_name, 
+              b.logo_url as manufacturer_logo,
               c.name as category_name
        FROM models m
-       LEFT JOIN brands b ON m.brand_id = b.id
+       LEFT JOIN manufacturers b ON m.manufacturer_id = b.id
        LEFT JOIN categories c ON m.category_id = c.id
        WHERE m.id = ?`,
       [id]
@@ -1508,7 +1508,7 @@ router.post('/models', authenticateToken, requireAdmin, [
 
 // Update model
 router.put('/models/:id', authenticateToken, requireAdmin, [
-  body('brand_id').optional().isUUID().withMessage('Brand ID must be a valid UUID'),
+  body('manufacturer_id').optional().isUUID().withMessage('Manufacturer ID must be a valid UUID'),
   body('name').optional().trim().notEmpty().withMessage('Model name cannot be empty'),
   body('category_id').optional().isUUID().withMessage('Category ID must be a valid UUID'),
   body('year').optional().isInt({ min: 1900, max: 2100 }).withMessage('Year must be a valid year'),
@@ -1521,7 +1521,7 @@ router.put('/models/:id', authenticateToken, requireAdmin, [
     }
 
     const { id } = req.params;
-    const { brand_id, name, category_id, year, specifications } = req.body;
+    const { manufacturer_id, name, category_id, year, specifications } = req.body;
 
     // Check if model exists
     const modelCheck = await query('SELECT id FROM models WHERE id = ?', [id]);
@@ -1530,8 +1530,8 @@ router.put('/models/:id', authenticateToken, requireAdmin, [
     }
 
     // Verify brand exists if provided
-    if (brand_id) {
-      const brandResult = await query('SELECT id FROM brands WHERE id = ?', [brand_id]);
+    if (manufacturer_id) {
+      const brandResult = await query('SELECT id FROM manufacturers WHERE id = ?', [manufacturer_id]);
       if (brandResult.rows.length === 0) {
         return res.status(404).json({ error: 'Brand not found' });
       }
@@ -1548,9 +1548,9 @@ router.put('/models/:id', authenticateToken, requireAdmin, [
     const updates = [];
     const values = [];
 
-    if (brand_id !== undefined) {
-      updates.push('brand_id = ?');
-      values.push(brand_id);
+    if (manufacturer_id !== undefined) {
+      updates.push('manufacturer_id = ?');
+      values.push(manufacturer_id);
     }
 
     if (name !== undefined) {
@@ -1593,11 +1593,11 @@ router.put('/models/:id', authenticateToken, requireAdmin, [
 
     const modelResult = await query(
       `SELECT m.*, 
-              b.name as brand_name, 
-              b.logo_url as brand_logo,
+              b.name as manufacturer_name, 
+              b.logo_url as manufacturer_logo,
               c.name as category_name
        FROM models m
-       LEFT JOIN brands b ON m.brand_id = b.id
+       LEFT JOIN manufacturers b ON m.manufacturer_id = b.id
        LEFT JOIN categories c ON m.category_id = c.id
        WHERE m.id = ?`,
       [id]

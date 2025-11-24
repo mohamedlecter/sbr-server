@@ -149,14 +149,14 @@ const seed = async () => {
     // Note: Do not clear the 'users' table in this step if you want the admin user to persist 
     // across multiple structural data seeds. For a complete reset, uncomment the 'DELETE FROM users' line.
     await query('DELETE FROM models');
-    await query('DELETE FROM parts WHERE brand_id IS NOT NULL');
-    await query('DELETE FROM brands');
+    await query('DELETE FROM parts WHERE manufacturer_id IS NOT NULL');
+    await query('DELETE FROM manufacturers');
     await query('DELETE FROM categories');
     // await query('DELETE FROM users'); 
     console.log('Existing data cleared (excluding users).');
 
     // Step 2: Insert Makes (Brands) from provided JSON
-    console.log(`Inserting ${MAKES_DATA.length} brands from provided data...`);
+    console.log(`Inserting ${MAKES_DATA.length} manufacturers from provided data...`);
     const brandMap = {}; // Map API make ID to database brand ID
 
     for (const make of MAKES_DATA) {
@@ -164,7 +164,7 @@ const seed = async () => {
         try {
           const brandId = uuidv4();
           await query(
-            'INSERT INTO brands (id, name) VALUES (?, ?)',
+            'INSERT INTO manufacturers (id, name) VALUES (?, ?)',
             [brandId, make.name]
           );
           
@@ -176,7 +176,7 @@ const seed = async () => {
           } else {
             // If duplicate, get existing brand ID
             const existingBrand = await query(
-              'SELECT id FROM brands WHERE name = ?',
+              'SELECT id FROM manufacturers WHERE name = ?',
               [make.name]
             );
             if (existingBrand.rows.length > 0) {
@@ -186,7 +186,7 @@ const seed = async () => {
         }
       }
     }
-    console.log(`Inserted ${Object.keys(brandMap).length} brands.`);
+    console.log(`Inserted ${Object.keys(brandMap).length} manufacturers.`);
 
     // Step 3: Insert Categories from provided JSON
     console.log(`Inserting ${CATEGORIES_DATA.length} categories from provided data...`);
@@ -244,7 +244,7 @@ const seed = async () => {
         for (const modelData of modelsToCreate) {
           try {
             await query(
-              'INSERT INTO models (id, brand_id, name, year, specifications) VALUES (?, ?, ?, ?, ?)',
+              'INSERT INTO models (id, manufacturer_id, name, year, specifications) VALUES (?, ?, ?, ?, ?)',
               [uuidv4(), brandId, modelData.name, modelData.year, modelData.specifications]
             );
             modelsInserted++;

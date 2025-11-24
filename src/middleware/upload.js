@@ -15,8 +15,8 @@ const storage = multer.diskStorage({
     let subDir = 'general';
     const urlPath = req.originalUrl || req.url || '';
     
-    if (urlPath.includes('/brands')) {
-      subDir = 'brands';
+    if (urlPath.includes('/manufacturers')) {
+      subDir = 'manufacturers';
     } else if (urlPath.includes('/categories')) {
       subDir = 'categories';
     } else if (urlPath.includes('/parts')) {

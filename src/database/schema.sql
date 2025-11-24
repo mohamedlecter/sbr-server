@@ -15,7 +15,7 @@ DROP TABLE IF EXISTS merchandise;
 DROP TABLE IF EXISTS parts;
 DROP TABLE IF EXISTS models;
 DROP TABLE IF EXISTS categories;
-DROP TABLE IF EXISTS brands;
+DROP TABLE IF EXISTS manufacturers;
 DROP TABLE IF EXISTS addresses;
 DROP TABLE IF EXISTS users;
 
@@ -57,8 +57,8 @@ CREATE TABLE addresses (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- Brands table
-CREATE TABLE brands (
+-- Manufacturers table
+CREATE TABLE manufacturers (
     id CHAR(36) PRIMARY KEY, -- Removed DEFAULT (UUID())
     name VARCHAR(255) NOT NULL UNIQUE,
     logo_url VARCHAR(500),
@@ -82,21 +82,21 @@ CREATE TABLE categories (
 -- Motorcycle Models table
 CREATE TABLE models (
     id CHAR(36) PRIMARY KEY, -- Removed DEFAULT (UUID())
-    brand_id CHAR(36) NOT NULL,
+    manufacturer_id CHAR(36) NOT NULL,
     category_id CHAR(36) NULL,
     name VARCHAR(255) NOT NULL,
     year INT NULL,
     specifications JSON,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (brand_id) REFERENCES brands(id) ON DELETE CASCADE,
+    FOREIGN KEY (manufacturer_id) REFERENCES manufacturers(id) ON DELETE CASCADE,
     FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
 );
 
 -- Parts table
 CREATE TABLE parts (
     id CHAR(36) PRIMARY KEY, -- Removed DEFAULT (UUID())
-    brand_id CHAR(36) NOT NULL,
+    manufacturer_id CHAR(36) NOT NULL,
     category_id CHAR(36) NOT NULL,
     name VARCHAR(255) NOT NULL,
     description TEXT,
@@ -112,7 +112,7 @@ CREATE TABLE parts (
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (brand_id) REFERENCES brands(id) ON DELETE CASCADE,
+    FOREIGN KEY (manufacturer_id) REFERENCES manufacturers(id) ON DELETE CASCADE,
     FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
 );
 
@@ -252,11 +252,11 @@ CREATE TABLE custom_builds (
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_membership_type ON users(membership_type);
 CREATE INDEX idx_addresses_user_id ON addresses(user_id);
-CREATE INDEX idx_parts_brand_id ON parts(brand_id);
+CREATE INDEX idx_parts_manufacturer_id ON parts(manufacturer_id);
 CREATE INDEX idx_parts_category_id ON parts(category_id);
 CREATE INDEX idx_parts_active ON parts(is_active);
 CREATE INDEX idx_merchandise_active ON merchandise(is_active);
-CREATE INDEX idx_models_brand_id ON models(brand_id);
+CREATE INDEX idx_models_manufacturer_id ON models(manufacturer_id);
 CREATE INDEX idx_models_category_id ON models(category_id);
 CREATE INDEX idx_orders_user_id ON orders(user_id);
 CREATE INDEX idx_orders_status ON orders(status);

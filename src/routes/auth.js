@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
 const { query } = require('../database/connection');
+const { v4: uuidv4 } = require('uuid');
 // const { sendVerificationEmail, sendVerificationSMS } = require('../utils/verification');
 const { generateVerificationCode } = require('../utils/helpers');
 
@@ -39,11 +40,14 @@ const register = async (req, res) => {
     const verification_code = generateVerificationCode();
     const verification_expires_at = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
+    // Generate UUID for user id
+    const id = uuidv4();
+
     // Create user
     const result = await query(
-      `INSERT INTO users (full_name, email, phone, password_hash, verification_code, verification_expires_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [full_name, email, phone, password_hash, verification_code, verification_expires_at]
+      `INSERT INTO users (id, full_name, email, phone, password_hash, verification_code, verification_expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, full_name, email, phone, password_hash, verification_code, verification_expires_at]
     );
 
     // Get the created user
@@ -118,11 +122,14 @@ const registerAdmin = async (req, res) => {
     const verification_code = generateVerificationCode();
     const verification_expires_at = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
+    // Generate UUID for user id
+    const id = uuidv4();
+
     // Create user
     const result = await query(
-      `INSERT INTO users (full_name, email, phone, password_hash, verification_code, verification_expires_at, is_admin)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [full_name, email, phone, password_hash, verification_code, verification_expires_at, true]
+      `INSERT INTO users (id, full_name, email, phone, password_hash, verification_code, verification_expires_at, is_admin)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, full_name, email, phone, password_hash, verification_code, verification_expires_at, true]
     );
 
     // Get the created user

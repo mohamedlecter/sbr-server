@@ -248,11 +248,11 @@ router.get('/:id', authenticateToken, async (req, res) => {
               CASE 
                 WHEN oi.product_type = 'part' THEN b.name
                 ELSE NULL
-              END as brand_name
+              END as manufacturer_name
        FROM order_items oi
        LEFT JOIN parts p ON oi.product_type = 'part' AND oi.product_id = p.id
        LEFT JOIN merchandise m ON oi.product_type = 'merch' AND oi.product_id = m.id
-       LEFT JOIN brands b ON oi.product_type = 'part' AND p.brand_id = b.id
+       LEFT JOIN manufacturers b ON oi.product_type = 'part' AND p.manufacturer_id = b.id
        WHERE oi.order_id = ?`,
       [id]
     );

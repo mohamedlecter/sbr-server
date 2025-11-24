@@ -26,7 +26,7 @@ router.get('/', authenticateToken, async (req, res) => {
               CASE 
                 WHEN ci.product_type = 'part' THEN b.name
                 ELSE NULL
-              END as brand_name,
+              END as manufacturer_name,
               CASE 
                 WHEN ci.product_type = 'part' THEN p.quantity
                 WHEN ci.product_type = 'merch' THEN m.quantity
@@ -34,7 +34,7 @@ router.get('/', authenticateToken, async (req, res) => {
        FROM cart_items ci
        LEFT JOIN parts p ON ci.product_type = 'part' AND ci.product_id = p.id
        LEFT JOIN merchandise m ON ci.product_type = 'merch' AND ci.product_id = m.id
-       LEFT JOIN brands b ON ci.product_type = 'part' AND p.brand_id = b.id
+       LEFT JOIN manufacturers b ON ci.product_type = 'part' AND p.manufacturer_id = b.id
        WHERE ci.user_id = ?
        ORDER BY ci.created_at DESC`,
       [req.user.id]

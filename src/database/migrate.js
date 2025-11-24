@@ -19,11 +19,22 @@ const migrate = async () => {
         schema = schema.replace(/\s+/g, ' ').trim();
 
         // 3. Split the schema into individual statements using ';'
-        //    Then filter out any resulting empty statements.
+        //    Then filter out any resulting empty statements and USE statements
+        //    (USE is not supported in prepared statements and is not needed since
+        //    the database is already specified in the connection pool)
         const statements = schema
             .split(';')
             .map(s => s.trim())
-            .filter(s => s.length > 0);
+            .filter(s => {
+                // Filter out empty statements and USE statements
+                if (s.length === 0) return false;
+                const upperStatement = s.toUpperCase().trim();
+                if (upperStatement.startsWith('USE ')) {
+                    console.log('Skipping USE statement (database already specified in connection pool)');
+                    return false;
+                }
+                return true;
+            });
             
         console.log(`Found ${statements.length} SQL statements to execute.`);
 
@@ -32,7 +43,7 @@ const migrate = async () => {
             const statement = statements[i];
             // Log DROP and CREATE statements for clarity
             const statementType = statement.toUpperCase().trim().substring(0, 4);
-            if (statementType === 'DROP' || statementType === 'CREA' || statementType === 'USE ') {
+            if (statementType === 'DROP' || statementType === 'CREA') {
                 console.log(`Executing statement ${i + 1}/${statements.length}: ${statementType}...`);
             }
             await query(statement);

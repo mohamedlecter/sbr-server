@@ -6,7 +6,7 @@ const migrateAddModels = async () => {
 
     // Drop indexes if they exist (must drop before dropping table)
     const indexes = [
-      { name: 'idx_models_brand_id', table: 'models', column: 'brand_id' },
+      { name: 'idx_models_manufacturer_id', table: 'models', column: 'manufacturer_id' },
       { name: 'idx_models_category_id', table: 'models', column: 'category_id' }
     ];
 
@@ -34,14 +34,14 @@ const migrateAddModels = async () => {
     await query(`
       CREATE TABLE models (
         id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
-        brand_id CHAR(36) NOT NULL,
+        manufacturer_id CHAR(36) NOT NULL,
         category_id CHAR(36) NULL,
         name VARCHAR(255) NOT NULL,
         year INT NULL,
         specifications JSON,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (brand_id) REFERENCES brands(id) ON DELETE CASCADE,
+        FOREIGN KEY (manufacturer_id) REFERENCES manufacturers(id) ON DELETE CASCADE,
         FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
       )
     `);

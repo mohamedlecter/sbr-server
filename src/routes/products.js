@@ -69,9 +69,9 @@ router.get('/categories/:id', async (req, res) => {
     const sortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
 
     const partsResult = await query(
-      `SELECT p.*, b.name as brand_name, b.logo_url as brand_logo
+      `SELECT p.*, b.name as manufacturer_name, b.logo_url as manufacturer_logo
        FROM parts p
-       JOIN brands b ON p.brand_id = b.id
+       JOIN manufacturers b ON p.manufacturer_id = b.id
        WHERE p.category_id = ? AND p.is_active = true
        ORDER BY p.${sortField} ${sortOrder}
        LIMIT ${queryLimit} OFFSET ${offset}`,
@@ -100,57 +100,55 @@ router.get('/categories/:id', async (req, res) => {
   }
 });
 
-// Get all brands
-router.get('/brands', async (req, res) => {
+// Get all manufacturers
+router.get('/manufacturers', async (req, res) => {
   try {
 
     const result = await query(
       `SELECT b.*, 
               COUNT(DISTINCT p.id) as parts_count,
               COUNT(DISTINCT m.id) as models_count
-       FROM brands b
-       LEFT JOIN parts p ON b.id = p.brand_id AND p.is_active = true
-       LEFT JOIN models m ON b.id = m.brand_id
+       FROM manufacturers b
+       LEFT JOIN parts p ON b.id = p.manufacturer_id AND p.is_active = true
+       LEFT JOIN models m ON b.id = m.manufacturer_id
        GROUP BY b.id
        ORDER BY b.name`,
     );
 
     res.json({
-      brands: result.rows,
+      manufacturers: result.rows,
     });
   } catch (error) {
-    console.error('Get brands error:', error);
+    console.error('Get manufacturers error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Get single brand with products
-router.get('/brands/:id', async (req, res) => {
+// Get single manufacturers with products
+router.get('/manufacturers/:id', async (req, res) => {
   try {
-    const brandId = req.params.id;
+    const manufacturerId = req.params.id;
     const { page = 1, limit = 20, sort = 'name', order = 'asc' } = req.query;
     const { offset, limit: queryLimit } = paginate(page, limit);
 
-    // Get brand details with counts
-    const brandResult = await query(
+    const manufacturerResult = await query(
       `SELECT b.*, 
               COUNT(DISTINCT p.id) as parts_count,
               COUNT(DISTINCT m.id) as models_count
-       FROM brands b
-       LEFT JOIN parts p ON b.id = p.brand_id AND p.is_active = true
-       LEFT JOIN models m ON b.id = m.brand_id
-       WHERE b.id = ?
-       GROUP BY b.id`,
-      [brandId]
+       FROM manufacturers m
+       LEFT JOIN parts p ON m.id = p.manufacturer_id AND p.is_active = true
+       LEFT JOIN models m ON m.id = m.manufacturer_id
+       WHERE m.id = ?
+       GROUP BY m.id`,
+      [manufacturerId]
     );
 
-    if (brandResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Brand not found' });
+    if (manufacturerResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Manufacturer not found' });
     }
 
-    const brand = brandResult.rows[0];
+    const manufacturer = manufacturerResult.rows[0];
 
-    // Get parts for this brand
     const validSortFields = ['name', 'selling_price', 'created_at'];
     const sortField = validSortFields.includes(sort) ? sort : 'name';
     const sortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
@@ -159,20 +157,20 @@ router.get('/brands/:id', async (req, res) => {
       `SELECT p.*, c.name as category_name
        FROM parts p
        JOIN categories c ON p.category_id = c.id
-       WHERE p.brand_id = ? AND p.is_active = true
+       WHERE p.manufacturer_id = ? AND p.is_active = true
        ORDER BY p.${sortField} ${sortOrder}
      LIMIT ${queryLimit} OFFSET ${offset}`,
-    [brandId]
+    [manufacturerId]
     );
 
     // Get total count
     const countResult = await query(
-      `SELECT COUNT(*) FROM parts WHERE brand_id = ? AND is_active = true`,
-      [brandId]
+      `SELECT COUNT(*) FROM parts WHERE manufacturer_id = ? AND is_active = true`,
+      [manufacturerId]
     );
 
     res.json({
-      brand,
+      manufacturer,
       parts: partsResult.rows,
       pagination: {
         page: parseInt(page),
@@ -182,7 +180,7 @@ router.get('/brands/:id', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Get brand error:', error);
+    console.error('Get manufacturer error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -195,7 +193,7 @@ router.get('/parts', optionalAuth, async (req, res) => {
       limit = 20, 
       search, 
       category_id, 
-      brand_id, 
+      manufacturer_id, 
       min_price, 
       max_price, 
       color, 
@@ -221,9 +219,9 @@ router.get('/parts', optionalAuth, async (req, res) => {
       queryParams.push(parseInt(category_id, 10));
     }
 
-    if (brand_id) {
-      whereConditions.push(`p.brand_id = ?`);
-      queryParams.push(parseInt(brand_id, 10));
+    if (manufacturer_id) {
+      whereConditions.push(`p.manufacturer_id = ?`);
+      queryParams.push(parseInt(manufacturer_id, 10));
     }
 
     if (min_price) {
@@ -253,9 +251,9 @@ router.get('/parts', optionalAuth, async (req, res) => {
 
     // Get parts with pagination
     const partsQuery = `
-      SELECT p.*, b.name as brand_name, b.logo_url as brand_logo, c.name as category_name
+      SELECT p.*, b.name as manufacturer_name, b.logo_url as manufacturer_logo, c.name as category_name
       FROM parts p
-      JOIN brands b ON p.brand_id = b.id
+      JOIN manufacturers b ON p.manufacturer_id = b.id
       JOIN categories c ON p.category_id = c.id
       ${whereClause}
       ORDER BY p.${sortField} ${sortOrder}
@@ -274,7 +272,7 @@ router.get('/parts', optionalAuth, async (req, res) => {
     const countQuery = `
       SELECT COUNT(*)
       FROM parts p
-      JOIN brands b ON p.brand_id = b.id
+      JOIN manufacturers b ON p.manufacturer_id = b.id
       JOIN categories c ON p.category_id = c.id
       ${whereClause}
     `;
@@ -291,7 +289,7 @@ router.get('/parts', optionalAuth, async (req, res) => {
       filters: {
         search,
         category_id,
-        brand_id,
+        manufacturer_id,
         min_price,
         max_price,
         color,
@@ -312,10 +310,10 @@ router.get('/parts/:id', optionalAuth, async (req, res) => {
     const partId = req.params.id;
 
     const result = await query(
-      `SELECT p.*, b.name as brand_name, b.logo_url as brand_logo, 
+      `SELECT p.*, b.name as manufacturer_name, b.logo_url as manufacturer_logo, 
               c.name as category_name, c.parent_id as category_parent_id
        FROM parts p
-       JOIN brands b ON p.brand_id = b.id
+       JOIN manufacturers b ON p.manufacturer_id = b.id
        JOIN categories c ON p.category_id = c.id
        WHERE p.id = ? AND p.is_active = true`,
       [partId]
@@ -326,25 +324,25 @@ router.get('/parts/:id', optionalAuth, async (req, res) => {
     }
 
     const partRow = result.rows[0];
-    const { original_price, ...part } = partRow; // keep category_id & brand_id
+    const { original_price, ...part } = partRow; // keep category_id & manufacturer_id
 
 
     let relatedResult = await query(
-      `SELECT p.*, b.name as brand_name, b.logo_url as brand_logo
+      `SELECT p.*, b.name as manufacturer_name, b.logo_url as manufacturer_logo
        FROM parts p
-       JOIN brands b ON p.brand_id = b.id
+       JOIN manufacturers b ON p.manufacturer_id = b.id
        WHERE p.id != ? AND p.is_active = true
-         AND (p.category_id = ? OR p.brand_id = ?)
+         AND (p.category_id = ? OR p.manufacturer_id = ?)
        ORDER BY RAND()
        LIMIT 6`,
-      [partId, part.category_id, part.brand_id]
+      [partId, part.category_id, part.manufacturer_id]
     );
     
     if (relatedResult.rows.length === 0) {
       relatedResult = await query(
-        `SELECT p.*, b.name as brand_name, b.logo_url as brand_logo
+        `SELECT p.*, b.name as manufacturer_name, b.logo_url as manufacturer_logo
          FROM parts p
-         JOIN brands b ON p.brand_id = b.id
+         JOIN manufacturers b ON p.manufacturer_id = b.id
          WHERE p.id != ? AND p.is_active = true
          ORDER BY RAND()
          LIMIT 6`,
@@ -493,7 +491,7 @@ router.get('/models', async (req, res) => {
       page = 1, 
       limit = 20, 
       search, 
-      brand_id, 
+      manufacturer_id, 
       category_id,
       year,
       sort = 'name', 
@@ -512,9 +510,9 @@ router.get('/models', async (req, res) => {
       queryParams.push(`%${sanitizeString(search).toLowerCase()}%`);
     }
 
-    if (brand_id) {
-      whereConditions.push(`m.brand_id = ?`);
-      queryParams.push(brand_id);
+    if (manufacturer_id) {
+      whereConditions.push(`m.manufacturer_id = ?`);
+      queryParams.push(manufacturer_id);
     }
 
     if (category_id) {
@@ -536,24 +534,24 @@ router.get('/models', async (req, res) => {
     // Get models with pagination
     const modelsQuery = `
       SELECT m.*, 
-             b.name as brand_name, 
-             b.logo_url as brand_logo,
+             b.name as manufacturer_name, 
+             b.logo_url as manufacturer_logo,
              c.name as category_name
       FROM models m
-      LEFT JOIN brands b ON m.brand_id = b.id
+      LEFT JOIN manufacturers b ON m.manufacturer_id = b.id
       LEFT JOIN categories c ON m.category_id = c.id
       ${whereClause}
       ORDER BY m.${sortField} ${sortOrder}
       LIMIT ${queryLimit} OFFSET ${offset}
     `;
 
-    const result = await query(modelsQuery);
+    const result = await query(modelsQuery, queryParams);
 
     // Get total count
     const countQuery = `
       SELECT COUNT(*) as count
       FROM models m
-      LEFT JOIN brands b ON m.brand_id = b.id
+      LEFT JOIN manufacturers b ON m.manufacturer_id = b.id
       LEFT JOIN categories c ON m.category_id = c.id
       ${whereClause}
     `;
@@ -569,7 +567,7 @@ router.get('/models', async (req, res) => {
       },
       filters: {
         search,
-        brand_id,
+        manufacturer_id,
         category_id,
         year,
         sort,
@@ -589,11 +587,11 @@ router.get('/models/:id', async (req, res) => {
 
     const result = await query(
       `SELECT m.*, 
-              b.name as brand_name, 
-              b.logo_url as brand_logo,
+              b.name as manufacturer_name, 
+              b.logo_url as manufacturer_logo,
               c.name as category_name
        FROM models m
-       LEFT JOIN brands b ON m.brand_id = b.id
+       LEFT JOIN manufacturers b ON m.manufacturer_id = b.id
        LEFT JOIN categories c ON m.category_id = c.id
        WHERE m.id = ?`,
       [modelId]
@@ -614,17 +612,16 @@ router.get('/models/:id', async (req, res) => {
       }
     }
 
-    // Get related models (same brand or category)
     const relatedResult = await query(
-      `SELECT m.*, b.name as brand_name, b.logo_url as brand_logo, c.name as category_name
+      `SELECT m.*, b.name as manufacturer_name, b.logo_url as manufacturer_logo, c.name as category_name
        FROM models m
-       LEFT JOIN brands b ON m.brand_id = b.id
+       LEFT JOIN manufacturers b ON m.manufacturer_id = b.id
        LEFT JOIN categories c ON m.category_id = c.id
        WHERE m.id != ? 
-         AND (m.brand_id = ? OR m.category_id = ?)
+         AND (m.manufacturer_id = ? OR m.category_id = ?)
        ORDER BY RAND()
        LIMIT 6`,
-      [modelId, model.brand_id, model.category_id]
+      [modelId, model.manufacturer_id, model.category_id]
     );
 
     res.json({
@@ -637,20 +634,19 @@ router.get('/models/:id', async (req, res) => {
   }
 });
 
-// Get models by brand
-router.get('/brands/:id/models', async (req, res) => {
+router.get('/manufacturers/:id/models', async (req, res) => {
   try {
     const brandId = req.params.id;
     const { page = 1, limit = 20, sort = 'name', order = 'asc', year } = req.query;
     const { offset, limit: queryLimit } = paginate(page, limit);
 
     // Verify brand exists
-    const brandResult = await query('SELECT * FROM brands WHERE id = ?', [brandId]);
+    const brandResult = await query('SELECT * FROM manufacturers WHERE id = ?', [brandId]);
     if (brandResult.rows.length === 0) {
       return res.status(404).json({ error: 'Brand not found' });
     }
 
-    let whereConditions = ['m.brand_id = ?'];
+    let whereConditions = ['m.manufacturer_id = ?'];
     let queryParams = [brandId];
 
     if (year) {
@@ -697,7 +693,7 @@ router.get('/brands/:id/models', async (req, res) => {
 router.get('/categories/:id/models', async (req, res) => {
   try {
     const categoryId = req.params.id;
-    const { page = 1, limit = 20, sort = 'name', order = 'asc', brand_id, year } = req.query;
+    const { page = 1, limit = 20, sort = 'name', order = 'asc', manufacturer_id, year } = req.query;
     const { offset, limit: queryLimit } = paginate(page, limit);
 
     // Verify category exists
@@ -709,9 +705,9 @@ router.get('/categories/:id/models', async (req, res) => {
     let whereConditions = ['m.category_id = ?'];
     let queryParams = [categoryId];
 
-    if (brand_id) {
-      whereConditions.push('m.brand_id = ?');
-      queryParams.push(brand_id);
+    if (manufacturer_id) {
+      whereConditions.push('m.manufacturer_id = ?');
+      queryParams.push(manufacturer_id);
     }
 
     if (year) {
@@ -724,9 +720,9 @@ router.get('/categories/:id/models', async (req, res) => {
     const sortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
 
     const modelsResult = await query(
-      `SELECT m.*, b.name as brand_name, b.logo_url as brand_logo
+      `SELECT m.*, b.name as manufacturer_name, b.logo_url as manufacturer_logo
        FROM models m
-       LEFT JOIN brands b ON m.brand_id = b.id
+       LEFT JOIN manufacturers b ON m.manufacturer_id = b.id
        WHERE ${whereConditions.join(' AND ')}
        ORDER BY m.${sortField} ${sortOrder}
        LIMIT ${queryLimit} OFFSET ${offset}`,
@@ -763,7 +759,7 @@ router.get('/models/make-name/:makeName', async (req, res) => {
 
     // Find brand by name
     const brandResult = await query(
-      'SELECT * FROM brands WHERE name = ?',
+      'SELECT * FROM manufacturers WHERE name = ?',
       [makeName]
     );
 
@@ -781,14 +777,14 @@ router.get('/models/make-name/:makeName', async (req, res) => {
       `SELECT m.*, c.name as category_name
        FROM models m
        LEFT JOIN categories c ON m.category_id = c.id
-       WHERE m.brand_id = ?
+       WHERE m.manufacturer_id = ?
        ORDER BY m.${sortField} ${sortOrder}
        LIMIT ${queryLimit} OFFSET ${offset}`,
       [brand.id]
     );
 
     const countResult = await query(
-      'SELECT COUNT(*) as count FROM models WHERE brand_id = ?',
+      'SELECT COUNT(*) as count FROM models WHERE manufacturer_id = ?',
       [brand.id]
     );
 
