@@ -1013,7 +1013,7 @@ router.post('/manufacturers',
   authenticateToken,
   requireAdmin,
   uploadSingle('logo'),
-  body('name').trim().notEmpty().withMessage('Brand name is required'),
+  body('name').trim().notEmpty().withMessage('Manufacturer name is required'),
   body('description').optional().isString().withMessage('Description must be a string'),
   async (req, res) => {
     try {
@@ -1033,21 +1033,21 @@ router.post('/manufacturers',
       // Generate a UUID manually since your table uses UUIDs
       const id = uuidv4();
 
-      // Insert the new brand
+      // Insert the new manufacturer
       await query(
         'INSERT INTO manufacturers (id, name, description, logo_url) VALUES (?, ?, ?, ?)',
         [id, sanitizeString(name), description ?? null, logoUrl]
       );
 
-      // Retrieve the newly created brand
-      const brandResult = await query('SELECT * FROM manufacturers WHERE id = ?', [id]);
+      // Retrieve the newly created manufacturer
+      const manufacturerResult = await query('SELECT * FROM manufacturers WHERE id = ?', [id]);
 
       res.status(201).json({
-        message: 'Brand created successfully',
-        brand: brandResult.rows[0],
+        message: 'Manufacturer created successfully',
+        manufacturer: manufacturerResult.rows[0],
       });
     } catch (error) {
-      console.error('Create brand error:', error);
+      console.error('Create manufacturer error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   }
@@ -1055,7 +1055,7 @@ router.post('/manufacturers',
 
 // Update brand
 router.put('/manufacturers/:id', authenticateToken, requireAdmin, uploadSingle('logo'), [
-  body('name').optional().trim().notEmpty().withMessage('Brand name cannot be empty'),
+  body('name').optional().trim().notEmpty().withMessage('Manufacturer name cannot be empty'),
   body('description').optional().isString().withMessage('Description must be a string')
 ], async (req, res) => {
   try {
@@ -1098,27 +1098,27 @@ router.put('/manufacturers/:id', authenticateToken, requireAdmin, uploadSingle('
 
     await query(queryText, values);
 
-    const brandResult = await query('SELECT * FROM manufacturers WHERE id = ?', [id]);
+    const manufacturerResult = await query('SELECT * FROM manufacturers WHERE id = ?', [id]);
 
     res.json({
-      message: 'Brand updated successfully',
-      brand: brandResult.rows[0]
+      message: 'Manufacturer updated successfully',
+      manufacturer: manufacturerResult.rows[0]
     });
   } catch (error) {
     if (error.code === 'ER_DUP_ENTRY') { // Unique constraint violation
-      return res.status(400).json({ error: 'Brand with this name already exists' });
+      return res.status(400).json({ error: 'Manufacturer with this name already exists' });
     }
-    console.error('Update brand error:', error);
+    console.error('Update manufacturer error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Delete brand
+// Delete manufacturer
 router.delete('/manufacturers/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Check if brand has associated parts
+    // Check if manufacturer has associated parts
     const partsResult = await query(
       'SELECT COUNT(*) FROM parts WHERE manufacturer_id = ?',
       [id]
@@ -1126,8 +1126,8 @@ router.delete('/manufacturers/:id', authenticateToken, requireAdmin, async (req,
 
     if (parseInt(partsResult.rows[0].count) > 0) {
       return res.status(400).json({ 
-        error: 'Cannot delete brand',
-        message: 'Brand has associated parts. Please remove all parts first.'
+        error: 'Cannot delete manufacturer',
+        message: 'Manufacturer has associated parts. Please remove all parts first.'
       });
     }
 
@@ -1137,10 +1137,10 @@ router.delete('/manufacturers/:id', authenticateToken, requireAdmin, async (req,
     );
 
     if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Brand not found' });
+      return res.status(404).json({ error: 'Manufacturer not found' });
     }
 
-    res.json({ message: 'Brand deleted successfully' });
+    res.json({ message: 'Manufacturer deleted successfully' });
   } catch (error) {
     console.error('Delete brand error:', error);
     res.status(500).json({ error: 'Internal server error' });

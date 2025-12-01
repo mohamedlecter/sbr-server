@@ -4,7 +4,7 @@ const { body, validationResult } = require('express-validator');
 const { query } = require('../database/connection');
 const { authenticateToken, requireVerified } = require('../middleware/auth');
 const { sanitizeString, formatDate } = require('../utils/helpers');
-
+const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
 
 // Get user profile
@@ -209,6 +209,7 @@ router.post('/addresses', authenticateToken, requireVerified, [
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
     }
+    const addressId = uuidv4();
 
     const { label, country, city, street, postal_code, is_default } = req.body;
     if (!req.user || !req.user.id) {
@@ -223,14 +224,14 @@ router.post('/addresses', authenticateToken, requireVerified, [
     }
 
     await query(
-      `INSERT INTO addresses (user_id, label, country, city, street, postal_code, is_default)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [req.user.id, label, country, city, street, postal_code ?? null, is_default || false]
+      `INSERT INTO addresses (id, user_id, label, country, city, street, postal_code, is_default)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [addressId, req.user.id, label, country, city, street, postal_code ?? null, is_default || false]
     );
     
     const selectResult = await query(
-      'SELECT id, label, country, city, street, postal_code, is_default, created_at, updated_at FROM addresses WHERE user_id = ? ORDER BY created_at DESC LIMIT 1',
-      [req.user.id]
+      'SELECT id, label, country, city, street, postal_code, is_default, created_at, updated_at FROM addresses WHERE id = ?',
+      [addressId]
     );
 
     if (selectResult.rows.length === 0) {

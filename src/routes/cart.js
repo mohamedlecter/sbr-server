@@ -3,6 +3,7 @@ const { body, validationResult } = require('express-validator');
 const { query } = require('../database/connection');
 const { authenticateToken, requireVerified, optionalAuth } = require('../middleware/auth');
 const { getMembershipDiscount, calculatePointsEarned } = require('../utils/helpers');
+const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
 
@@ -141,9 +142,10 @@ router.post('/add',authenticateToken, requireVerified, [
       });
     } else {
       // Add new item to cart
+      const cartItemId = uuidv4();
       await query(
-        'INSERT INTO cart_items (user_id, product_type, product_id, quantity) VALUES (?, ?, ?, ?)',
-        [req.user.id, product_type, product_id, quantity]
+        'INSERT INTO cart_items (id, user_id, product_type, product_id, quantity) VALUES (?, ?, ?, ?, ?)',
+        [cartItemId, req.user.id, product_type, product_id, quantity]
       );
 
       res.json({ 

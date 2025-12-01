@@ -132,16 +132,19 @@ router.get('/manufacturers/:id', async (req, res) => {
     const { offset, limit: queryLimit } = paginate(page, limit);
 
     const manufacturerResult = await query(
-      `SELECT b.*, 
-              COUNT(DISTINCT p.id) as parts_count,
-              COUNT(DISTINCT m.id) as models_count
-       FROM manufacturers m
-       LEFT JOIN parts p ON m.id = p.manufacturer_id AND p.is_active = true
-       LEFT JOIN models m ON m.id = m.manufacturer_id
-       WHERE m.id = ?
-       GROUP BY m.id`,
+      `SELECT man.*, 
+              COUNT(DISTINCT p.id) AS parts_count,
+              COUNT(DISTINCT mod.id) AS models_count
+       FROM manufacturers man
+       LEFT JOIN parts p 
+            ON man.id = p.manufacturer_id 
+           AND p.is_active = true
+       LEFT JOIN models mod 
+            ON man.id = mod.manufacturer_id
+       WHERE man.id = ?
+       GROUP BY man.id`,
       [manufacturerId]
-    );
+    );    
 
     if (manufacturerResult.rows.length === 0) {
       return res.status(404).json({ error: 'Manufacturer not found' });
@@ -216,12 +219,12 @@ router.get('/parts', optionalAuth, async (req, res) => {
 
     if (category_id) {
       whereConditions.push(`p.category_id = ?`);
-      queryParams.push(parseInt(category_id, 10));
+      queryParams.push(category_id);
     }
 
     if (manufacturer_id) {
       whereConditions.push(`p.manufacturer_id = ?`);
-      queryParams.push(parseInt(manufacturer_id, 10));
+      queryParams.push(manufacturer_id);
     }
 
     if (min_price) {
@@ -260,7 +263,8 @@ router.get('/parts', optionalAuth, async (req, res) => {
       LIMIT ${queryLimit} OFFSET ${offset}
     `;
 
-    const result = await query(partsQuery);
+    const result = await query(partsQuery, queryParams);
+
 
     // exclude original_price from the result
     const parts = result.rows.map(part => {
@@ -276,7 +280,7 @@ router.get('/parts', optionalAuth, async (req, res) => {
       JOIN categories c ON p.category_id = c.id
       ${whereClause}
     `;
-    const countResult = await query(countQuery, queryParams.slice(0, -2));
+    const countResult = await query(countQuery, queryParams);
 
     res.json({
       parts: parts,
