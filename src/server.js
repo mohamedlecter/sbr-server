@@ -6,8 +6,11 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Security middleware
-app.use(helmet());
+// Security middleware - configure helmet to allow CORS for images
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }, // Allow images from any origin
+  crossOriginEmbedderPolicy: false // Allow embedding images
+}));
 
 // CORS configuration
 app.use(cors({
@@ -21,8 +24,16 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Static files
-app.use('/uploads', express.static('uploads'));
+// Static files with explicit CORS headers
+app.use('/uploads', express.static('uploads', {
+  setHeaders: (res, path) => {
+    // Set CORS headers explicitly for static files
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Cache-Control', 'public, max-age=31536000'); // Optional: cache images
+  }
+}));
 
 // Routes
 app.use('/api/auth', require('./routes/auth.js'));
