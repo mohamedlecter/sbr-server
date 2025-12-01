@@ -84,9 +84,11 @@ router.get('/categories/:id', async (req, res) => {
       [categoryId]
     );
 
+    const parsedParts = partsResult.rows.map(part => parseJsonFields(part));
+
     res.json({
       category,
-      parts: partsResult.rows,
+      parts: parsedParts,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -172,9 +174,11 @@ router.get('/manufacturers/:id', async (req, res) => {
       [manufacturerId]
     );
 
+    const parsedParts = partsResult.rows.map(part => parseJsonFields(part));
+
     res.json({
       manufacturer,
-      parts: partsResult.rows,
+      parts: parsedParts,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -266,10 +270,10 @@ router.get('/parts', optionalAuth, async (req, res) => {
     const result = await query(partsQuery, queryParams);
 
 
-    // exclude original_price from the result
+    // exclude original_price from the result and parse JSON fields
     const parts = result.rows.map(part => {
       const { original_price, ...otherFields } = part;
-      return otherFields;
+      return parseJsonFields(otherFields);
     });
 
     // Get total count
@@ -329,7 +333,7 @@ router.get('/parts/:id', optionalAuth, async (req, res) => {
 
     const partRow = result.rows[0];
     const { original_price, ...part } = partRow; // keep category_id & manufacturer_id
-
+    const parsedPart = parseJsonFields(part);
 
     let relatedResult = await query(
       `SELECT p.*, b.name as manufacturer_name, b.logo_url as manufacturer_logo
@@ -354,10 +358,11 @@ router.get('/parts/:id', optionalAuth, async (req, res) => {
       );
     }
     
+    const parsedRelatedParts = relatedResult.rows.map(part => parseJsonFields(part));
 
     res.json({
-      part,
-      related_parts: relatedResult.rows
+      part: parsedPart,
+      related_parts: parsedRelatedParts
     });
   } catch (error) {
     console.error('Get part error:', error);
@@ -435,8 +440,10 @@ router.get('/merchandise', optionalAuth, async (req, res) => {
     const countQuery = `SELECT COUNT(*) AS count FROM merchandise m ${whereClause}`;
     const countResult = await query(countQuery, queryParams);
 
+    const parsedMerchandise = result.rows.map(item => parseJsonFields(item));
+
     res.json({
-      merchandise: result.rows,
+      merchandise: parsedMerchandise,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -467,6 +474,7 @@ router.get('/merchandise/:id', optionalAuth, async (req, res) => {
     }
 
     const merchandise = result.rows[0];
+    const parsedMerchandise = parseJsonFields(merchandise);
 
     // Get related merchandise
     const relatedResult = await query(
@@ -478,9 +486,11 @@ router.get('/merchandise/:id', optionalAuth, async (req, res) => {
       [merchandiseId]
     );
 
+    const parsedRelatedMerchandise = relatedResult.rows.map(item => parseJsonFields(item));
+
     res.json({
-      merchandise,
-      related_merchandise: relatedResult.rows
+      merchandise: parsedMerchandise,
+      related_merchandise: parsedRelatedMerchandise
     });
   } catch (error) {
     console.error('Get merchandise error:', error);
@@ -561,8 +571,10 @@ router.get('/models', async (req, res) => {
     `;
     const countResult = await query(countQuery, queryParams);
 
+    const parsedModels = result.rows.map(model => parseJsonFields(model));
+
     res.json({
-      models: result.rows,
+      models: parsedModels,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -606,15 +618,7 @@ router.get('/models/:id', async (req, res) => {
     }
 
     const model = result.rows[0];
-
-    // Parse specifications JSON if it exists
-    if (model.specifications && typeof model.specifications === 'string') {
-      try {
-        model.specifications = JSON.parse(model.specifications);
-      } catch (e) {
-        // If parsing fails, keep as is
-      }
-    }
+    const parsedModel = parseJsonFields(model);
 
     const relatedResult = await query(
       `SELECT m.*, b.name as manufacturer_name, b.logo_url as manufacturer_logo, c.name as category_name
@@ -628,9 +632,11 @@ router.get('/models/:id', async (req, res) => {
       [modelId, model.manufacturer_id, model.category_id]
     );
 
+    const parsedRelatedModels = relatedResult.rows.map(model => parseJsonFields(model));
+
     res.json({
-      model,
-      related_models: relatedResult.rows
+      model: parsedModel,
+      related_models: parsedRelatedModels
     });
   } catch (error) {
     console.error('Get model error:', error);
@@ -677,9 +683,11 @@ router.get('/manufacturers/:id/models', async (req, res) => {
       queryParams
     );
 
+    const parsedModels = modelsResult.rows.map(model => parseJsonFields(model));
+
     res.json({
       brand: brandResult.rows[0],
-      models: modelsResult.rows,
+      models: parsedModels,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -738,9 +746,11 @@ router.get('/categories/:id/models', async (req, res) => {
       queryParams
     );
 
+    const parsedModels = modelsResult.rows.map(model => parseJsonFields(model));
+
     res.json({
       category: categoryResult.rows[0],
-      models: modelsResult.rows,
+      models: parsedModels,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -792,6 +802,8 @@ router.get('/models/make-name/:makeName', async (req, res) => {
       [brand.id]
     );
 
+    const parsedModels = modelsResult.rows.map(model => parseJsonFields(model));
+
     res.json({
       brand: {
         id: brand.id,
@@ -799,7 +811,7 @@ router.get('/models/make-name/:makeName', async (req, res) => {
         logo_url: brand.logo_url,
         description: brand.description
       },
-      models: modelsResult.rows,
+      models: parsedModels,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -812,6 +824,26 @@ router.get('/models/make-name/:makeName', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// Helper function to parse JSON fields from database results
+function parseJsonFields(item) {
+  const jsonFields = ['images', 'color_options', 'compatibility', 'size_options', 'dimensions', 'specifications'];
+  const parsed = { ...item };
+  
+  jsonFields.forEach(field => {
+    if (parsed[field] !== null && parsed[field] !== undefined) {
+      if (typeof parsed[field] === 'string') {
+        try {
+          parsed[field] = JSON.parse(parsed[field]);
+        } catch (e) {
+          // If parsing fails, keep as is
+        }
+      }
+    }
+  });
+  
+  return parsed;
+}
 
 // Helper function to organize categories hierarchically
 function organizeCategoriesHierarchy(categories) {

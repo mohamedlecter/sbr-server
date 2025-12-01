@@ -7,6 +7,26 @@ const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
 
+// Helper function to parse JSON fields from database results
+function parseJsonFields(item) {
+  const jsonFields = ['product_images', 'images', 'color_options', 'compatibility', 'size_options', 'dimensions'];
+  const parsed = { ...item };
+  
+  jsonFields.forEach(field => {
+    if (parsed[field] !== null && parsed[field] !== undefined) {
+      if (typeof parsed[field] === 'string') {
+        try {
+          parsed[field] = JSON.parse(parsed[field]);
+        } catch (e) {
+          // If parsing fails, keep as is
+        }
+      }
+    }
+  });
+  
+  return parsed;
+}
+
 // Get user's cart
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -41,14 +61,15 @@ router.get('/', authenticateToken, async (req, res) => {
       [req.user.id]
     );
 
-    // Calculate totals
+    // Calculate totals and parse JSON fields
     let subtotal = 0;
     const cartItems = result.rows.map(item => {
-      const itemTotal = item.unit_price * item.quantity;
+      const parsedItem = parseJsonFields(item);
+      const itemTotal = parsedItem.unit_price * parsedItem.quantity;
       subtotal += itemTotal;
       
       return {
-        ...item,
+        ...parsedItem,
         item_total: itemTotal
       };
     });

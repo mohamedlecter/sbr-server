@@ -281,7 +281,18 @@ router.get('/:id', authenticateToken, async (req, res) => {
           postal_code: order.postal_code
         }
       },
-      items: itemsResult.rows,
+      items: itemsResult.rows.map(item => {
+        // Parse JSON fields if they exist
+        const parsed = { ...item };
+        if (parsed.product_images && typeof parsed.product_images === 'string') {
+          try {
+            parsed.product_images = JSON.parse(parsed.product_images);
+          } catch (e) {
+            // If parsing fails, keep as is
+          }
+        }
+        return parsed;
+      }),
       payments: paymentResult.rows
     });
   } catch (error) {
